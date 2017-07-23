@@ -1,40 +1,31 @@
 
-// game.cpp
-
 // includes
 
 #include <cstdlib>
 #include <iostream>
 #include <string>
 
-#include "bb_base.h"
-#include "board.h"
-#include "fen.h"
-#include "game.h"
+#include "bb_base.hpp"
+#include "common.hpp"
+#include "game.hpp"
 #include "libmy.hpp"
-#include "move.h"
-#include "pos.h"
+#include "move.hpp"
+#include "pos.hpp"
+#include "score.hpp"
 
 // functions
 
-void Game::clear() {
-
-   init(Start_FEN);
+Game::Game() {
+   init(pos::Start);
 }
 
-void Game::clear(int moves, double time, double inc) {
-
-   init(Start_FEN, moves, time, inc);
+void Game::init(const Pos & pos) {
+   init(pos, 0, 0.0, 0.0);
 }
 
-void Game::init(const std::string & fen) {
+void Game::init(const Pos & pos, int moves, double time, double inc) {
 
-   init(fen, 0, 0.0, 0.0);
-}
-
-void Game::init(const std::string & fen, int moves, double time, double inc) {
-
-   p_fen = fen;
+   p_pos_start = pos;
    p_moves = moves;
    p_time = time;
    p_inc = inc;
@@ -46,9 +37,12 @@ void Game::init(const std::string & fen, int moves, double time, double inc) {
 
 void Game::reset() {
 
-   p_pos = 0;
+   p_ply = 0;
 
-   board_from_fen(p_board, p_fen);
+   p_node.clear();
+
+   p_node.add_ref(Node(p_pos_start));
+   assert(p_node.size() == p_ply + 1);
 
    p_clock[White] = p_time;
    p_clock[Black] = p_time;
@@ -56,13 +50,11 @@ void Game::reset() {
    p_flag[Black] = false;
 }
 
-void Game::add_move(move_t mv, double time) {
+void Game::add_move(Move mv, double time) {
 
-   Board & bd = p_board;
-
-   if (!move_is_legal(mv, bd)) {
-      board_disp(bd);
-      std::cout << "illegal move: " << move_to_hub(mv) << std::endl;
+   if (!move::is_legal(mv, pos())) {
+      pos::disp(pos());
+      std::cout << "illegal move: " << move::to_hub(mv) << std::endl;
       std::cout << std::endl;
       std::exit(EXIT_FAILURE);
    }
@@ -71,22 +63,20 @@ void Game::add_move(move_t mv, double time) {
    mi.move = mv;
    mi.time = time;
 
-   p_move.set_size(p_pos); // truncate move list
-   p_move.add(mi);
+   p_move.set_size(p_ply); // truncate move list
+   p_move.add_ref(mi);
 
    play_move();
 }
 
 void Game::play_move() {
 
-   assert(p_pos < size());
-   move_t mv   = p_move[p_pos].move;
-   double time = p_move[p_pos].time;
-   p_pos++;
+   assert(p_ply < size());
+   Move   mv   = p_move[p_ply].move;
+   double time = p_move[p_ply].time;
+   p_ply++;
 
-   Board & bd = p_board;
-
-   int turn = bd.turn();
+   Side turn = this->turn();
 
    p_clock[turn] += p_inc; // pre-increment #
    p_clock[turn] -= time;
@@ -96,72 +86,58 @@ void Game::play_move() {
       p_flag[turn] = true;
    }
 
-   if (p_moves != 0 && p_pos % (p_moves * 2) == 0) {
+   if (p_moves != 0 && p_ply % (p_moves * 2) == 0) {
       p_clock[White] += p_time;
       p_clock[Black] += p_time;
    }
 
-   board_do_move(bd, mv);
+   p_node.add_ref(node().succ(mv));
+   assert(p_node.size() == p_ply + 1);
 }
 
-void Game::go_to(int pos) {
+void Game::go_to(int ply) {
 
-   assert(pos >= 0 && pos <= size());
+   assert(ply >= 0 && ply <= size());
 
    reset();
 
-   for (int i = 0; i < pos; i++) {
+   for (int i = 0; i < ply; i++) {
       play_move();
    }
 
-   assert(p_pos == pos);
+   assert(p_ply == ply);
 }
 
 bool Game::is_end(bool use_bb) const {
-
-   const Board & bd = p_board;
-
-   return board_is_end(bd, 3) || (use_bb && bb::pos_is_game(bd));
+   return node().is_end() || (use_bb && bb::pos_is_load(pos()));
 }
 
-int Game::result(bool use_bb) const {
+int Game::result(bool use_bb, Side sd) const {
 
    assert(is_end(use_bb));
 
-   const Board & bd = p_board;
+   int res;
 
-   if (board_is_loss(bd)) {
+   if (pos::is_loss(pos())) {
 
-      return (bd.turn() == White) ? -1 : +1;
+      res = score::side(-1, turn()); // for white
 
-   } else if (bd.is_draw(3)) {
+   } else if (node().is_draw(3)) {
 
-      return 0;
+      res = 0;
 
-   } else if (use_bb && bb::pos_is_game(bd)) {
+   } else if (use_bb && bb::pos_is_load(pos())) {
 
-      int val = bb::probe(bd);
-
-      if (val == bb::Win) {
-         return (bd.turn() == White) ? +1 : -1;
-      } else if (val == bb::Loss) {
-         return (bd.turn() == White) ? -1 : +1;
-      } else {
-         return 0;
-      }
+      bb::Value val = bb::probe(pos());
+      res = bb::value_nega(val, turn()); // for white
 
    } else {
 
       assert(false);
-      return 0;
+      res = 0;
    }
-}
 
-int Game::moves(int sd) const {
-
-   assert(sd == p_board.turn());
-
-   return (p_moves == 0) ? 0 : p_moves - (p_pos / 2) % p_moves;
+   return score::side(res, sd); // for sd
 }
 
 std::string result_to_string(int result) {
@@ -174,6 +150,4 @@ std::string result_to_string(int result) {
       return "draw";
    }
 }
-
-// end of game.cpp
 

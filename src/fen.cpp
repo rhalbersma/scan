@@ -1,106 +1,95 @@
 
-// fen.cpp
-
 // includes
 
 #include <string>
 
-#include "bit.h"
-#include "fen.h"
+#include "bit.hpp"
+#include "common.hpp"
+#include "fen.hpp"
 #include "libmy.hpp"
-#include "pos.h"
-#include "util.h"
+#include "pos.hpp"
+#include "util.hpp"
+#include "var.hpp"
 
 // prototypes
 
-static void add_pieces (bit_t & bm, bit_t & bk, Scanner_Number & scan);
-static void add_piece  (bit_t & bm, bit_t & bk, int sq, bool king);
+static Side parse_side   (Scanner_Number & scan);
+static void parse_pieces (Bit piece[], Scanner_Number & scan);
 
-static std::string pos_pieces (const Pos & pos, int sd);
+static Pos  pos_from_string (const std::string & s, const std::string & sides, const std::string & pieces);
 
-static std::string run_string (int pc, int sq, int len);
+static Pos  pos_from_pieces (Side turn, Bit wm, Bit bm, Bit wk, Bit bk);
+
+static std::string pos_pieces (const Pos & pos, Side sd);
+
+static std::string run_string (Piece_Side ps, int from, int to);
+
+static std::string pos_string (const Pos & pos, const std::string & sides, const std::string & pieces);
+
+static int find (char c, const std::string & s);
 
 // functions
 
-void pos_from_fen(Pos & pos, const std::string & s) {
-
-   // init
+Pos pos_from_fen(const std::string & s) {
 
    Scanner_Number scan(s);
-   std::string token;
 
-   // turn
+   Side turn = parse_side(scan);
 
-   int turn;
+   Bit piece_side[Side_Size][Piece_Size] { { Bit(0), Bit(0) }, { Bit(0), Bit(0) } };
 
-   token = scan.get_token();
+   while (!scan.eos()) {
+
+      std::string token = scan.get_token();
+      if (token != ":") throw Bad_Input();
+
+      Side sd = parse_side(scan);
+      parse_pieces(piece_side[sd], scan);
+   }
+
+   return pos_from_pieces(turn,
+                          piece_side[White][Man],
+                          piece_side[Black][Man],
+                          piece_side[White][King],
+                          piece_side[Black][King]);
+}
+
+static Side parse_side(Scanner_Number & scan) {
+
+   std::string token = scan.get_token();
 
    if (token == "W") {
-      turn = White;
+      return White;
    } else if (token == "B") {
-      turn = Black;
+      return Black;
    } else {
       throw Bad_Input();
    }
-
-   // white pieces
-
-   token = scan.get_token();
-   if (token != ":") throw Bad_Input();
-
-   token = scan.get_token();
-   if (token != "W") throw Bad_Input();
-
-   bit_t wm, wk;
-   add_pieces(wm, wk, scan);
-
-   // black pieces
-
-   token = scan.get_token();
-   if (token != ":") throw Bad_Input();
-
-   token = scan.get_token();
-   if (token != "B") throw Bad_Input();
-
-   bit_t bm, bk;
-   add_pieces(bm, bk, scan);
-
-   // update board
-
-   if (!scan.eos()) throw Bad_Input();
-
-   pos.from_bit(turn, wm, bm, wk, bk);
 }
 
-static void add_pieces(bit_t & bm, bit_t & bk, Scanner_Number & scan) {
-
-   bm = 0;
-   bk = 0;
+static void parse_pieces(Bit piece[], Scanner_Number & scan) {
 
    std::string token;
 
    while (true) {
 
-      bool king = false;
+      Piece pc = Man;
 
       token = scan.get_token();
+      if (token == ",") token = scan.get_token();
 
-      if (token == ",") {
-         token = scan.get_token();
-      }
-
-      if (token == "") {
+      if (token == "") { // EOS
          return;
       } else if (token == ":") {
          scan.unget_char(); // HACK: no unget_token
          return;
       } else if (token == "K") {
-         king = true;
+         pc = King;
          token = scan.get_token();
       }
 
       if (!string_is_square(token)) throw Bad_Input();
-      int from = ml::stoi(token);
+      int from = std::stoi(token);
 
       token = scan.get_token();
 
@@ -108,108 +97,80 @@ static void add_pieces(bit_t & bm, bit_t & bk, Scanner_Number & scan) {
 
          if (token.size() == 1) scan.unget_char(); // HACK: no unget_token
 
-         add_piece(bm, bk, from, king);
+         bit::set(piece[pc], square_from_std(from));
 
       } else {
 
          token = scan.get_token();
 
          if (!string_is_square(token)) throw Bad_Input();
-         int to = ml::stoi(token);
+         int to = std::stoi(token);
          if (to < from) throw Bad_Input();
 
          for (int sq = from; sq <= to; sq++) {
-            add_piece(bm, bk, sq, king);
+            bit::set(piece[pc], square_from_std(sq));
          }
       }
    }
 }
 
-static void add_piece(bit_t & bm, bit_t & bk, int sq, bool king) {
-
-   assert(sq >= 1 && sq <= 50);
-
-   sq = square_from_50(sq - 1);
-
-   if (king) {
-      bit_set(bk, sq);
-   } else {
-      bit_set(bm, sq);
-   }
+Pos pos_from_hub(const std::string & s) {
+   return pos_from_string(s, "WB", "wbWBe");
 }
 
-void pos_from_hub(Pos & pos, const std::string & s) {
+Pos pos_from_dxp(const std::string & s) {
+   return pos_from_string(s, "WZ", "wzWZe");
+}
 
-   if (s.size() != 51) throw Bad_Input();
+static Pos pos_from_string(const std::string & s, const std::string & sides, const std::string & pieces) {
+
+   assert(sides.size() == Side_Size);
+   assert(pieces.size() == 5);
+
+   if (s.size() != Dense_Size + 1) throw Bad_Input();
+
+   int i = 0;
 
    // turn
 
-   int turn;
-
-   switch (s[0]) {
-   case 'w' : turn = White;      break;
-   case 'b' : turn = Black;      break;
-   default  : throw Bad_Input(); break;
-   }
+   Side turn = side_make(find(s[i++], sides));
 
    // squares
 
-   bit_t wm = 0, bm = 0, wk = 0, bk = 0;
+   Bit piece_side[5] { Bit(0), Bit(0), Bit(0), Bit(0), Bit(0) };
 
-   for (int i = 0; i < 50; i++) {
+   for (int dense = 0; dense < Dense_Size; dense++) {
 
-      int sq = square_from_50(i);
+      Square sq = square_sparse(dense);
 
-      switch (s[i + 1]) {
-      case 'w' : bit_set(wm, sq);   break;
-      case 'b' : bit_set(bm, sq);   break;
-      case 'W' : bit_set(wk, sq);   break;
-      case 'B' : bit_set(bk, sq);   break;
-      case 'e' : /* no-op */        break;
-      default  : throw Bad_Input(); break;
-      }
+      Piece_Side ps = Piece_Side(find(s[i++], pieces));
+      bit::set(piece_side[ps], sq);
    }
 
-   // update board
+   // wrap up
 
-   pos.from_bit(turn, wm, bm, wk, bk);
+   return pos_from_pieces(turn,
+                          piece_side[White_Man],
+                          piece_side[Black_Man],
+                          piece_side[White_King],
+                          piece_side[Black_King]);
 }
 
-void pos_from_dxp(Pos & pos, const std::string & s) {
+static Pos pos_from_pieces(Side turn, Bit wm, Bit bm, Bit wk, Bit bk) {
 
-   if (s.size() != 51) throw Bad_Input();
+   if (bit::count(wm | bm | wk | bk) != bit::count(wm) + bit::count(bm) + bit::count(wk) + bit::count(bk)) throw Bad_Input(); // all disjoint?
 
-   // turn
+   if (!bit::is_incl(wm, bit::WM_Squares)) throw Bad_Input();
+   if (!bit::is_incl(bm, bit::BM_Squares)) throw Bad_Input();
 
-   int turn;
+   Bit side[Side_Size] { wm | wk, bm | bk };
+   if (side[side_opp(turn)] == 0) throw Bad_Input();
+   if (var::Variant == var::BT && (side[turn] & (wk | bk)) != 0) throw Bad_Input();
 
-   switch (s[0]) {
-   case 'W' : turn = White;      break;
-   case 'Z' : turn = Black;      break;
-   default  : throw Bad_Input(); break;
-   }
+   if (bit::count(side[White]) > 20) throw Bad_Input();
+   if (bit::count(side[Black]) > 20) throw Bad_Input();
 
-   // squares
-
-   bit_t wm = 0, bm = 0, wk = 0, bk = 0;
-
-   for (int i = 0; i < 50; i++) {
-
-      int sq = square_from_50(i);
-
-      switch (s[i + 1]) {
-      case 'w' : bit_set(wm, sq);   break;
-      case 'z' : bit_set(bm, sq);   break;
-      case 'W' : bit_set(wk, sq);   break;
-      case 'Z' : bit_set(bk, sq);   break;
-      case 'e' : /* no-op */        break;
-      default  : throw Bad_Input(); break;
-      }
-   }
-
-   // update board
-
-   pos.from_bit(turn, wm, bm, wk, bk);
+   return Pos(turn, wm, bm, wk, bk);
 }
 
 std::string pos_fen(const Pos & pos) {
@@ -223,126 +184,103 @@ std::string pos_fen(const Pos & pos) {
    return s;
 }
 
-static std::string pos_pieces(const Pos & pos, int sd) {
-
-   assert(side_is_ok(sd));
+static std::string pos_pieces(const Pos & pos, Side sd) {
 
    std::string s;
 
-   bool first = true;
+   int prev = -1;
+   int from = 0;
+   int to   = 0;
 
-   int run_pc = Frame;
-   int run_sq = 0;
-   int run_len = 0;
+   for (int sq = 1; sq <= Dense_Size; sq++) {
 
-   for (int i = 0; i < 50; i++) {
+      Piece_Side ps = pos::piece_side(pos, square_from_std(sq));
 
-      int sq = square_from_50(i);
-      int pc = pos_square(pos, sq);
+      if (ps == prev) {
 
-      if (pc == run_pc) {
-
-         run_len++;
+         to++;
 
       } else {
 
-         if (run_len != 0) {
-            if (!first) s += ",";
-            s += run_string(run_pc, run_sq, run_len);
-            first = false;
+         if (prev >= 0) {
+            if (s != "") s += ",";
+            s += run_string(piece_side_make(prev), from, to);
          }
 
-         if (pc != Empty && piece_is_side(pc, sd)) {
-            run_pc = pc;
-            run_sq = i;
-            run_len = 1;
+         if (ps != Empty && piece_side_side(ps) == sd) {
+            prev = ps;
+            from = sq;
+            to   = sq;
          } else {
-            run_pc = Frame;
-            run_sq = 0;
-            run_len = 0;
+            prev = -1;
+            from = 0;
+            to   = 0;
          }
       }
    }
 
-   if (run_len != 0) {
-      if (!first) s += ",";
-      s += run_string(run_pc, run_sq, run_len);
-      first = false;
+   if (prev >= 0) {
+      if (s != "") s += ",";
+      s += run_string(piece_side_make(prev), from, to);
    }
 
    return s;
 }
 
-static std::string run_string(int pc, int sq, int len) {
+static std::string run_string(Piece_Side ps, int from, int to) {
 
-   assert(piece_is_ok(pc));
-   assert(len != 0);
-   assert(sq + len <= 50);
+   assert(ps != Empty);
+   assert(1 <= from && from <= to && to <= Dense_Size);
 
    std::string s;
 
-   if (piece_is_king(pc)) {
-      s += "K";
-   }
+   if (piece_side_piece(ps) == King) s += "K";
 
-   s += ml::itos(sq + 1);
+   s += std::to_string(from);
 
-   if (len == 2) {
+   if (to == from) { // length 1
+      // no-op
+   } else if (to == from + 1) { // length 2
       s += ",";
-      s += ml::itos(sq + 2);
-   } else if (len >= 3) {
+      if (piece_side_piece(ps) == King) s += "K";
+      s += std::to_string(to);
+   } else { // length 3+
       s += "-";
-      s += ml::itos(sq + len);
-   }
-
-   return s;
-}
-
-std::string pos_hub(const Pos & pos) {
-
-   std::string s;
-
-   s += (pos.turn() == White) ? "w" : "b";
-
-   for (int i = 0; i < 50; i++) {
-
-      int sq = square_from_50(i);
-
-      switch (pos_square(pos, sq)) {
-      case WM :    s += "w";      break;
-      case BM :    s += "b";      break;
-      case WK :    s += "W";      break;
-      case BK :    s += "B";      break;
-      case Empty : s += "e";      break;
-      default :    assert(false); break;
-      }
+      s += std::to_string(to);
    }
 
    return s;
 }
 
 std::string pos_dxp(const Pos & pos) {
+   return pos_string(pos, "WZ", "wzWZe");
+}
+
+static std::string pos_string(const Pos & pos, const std::string & sides, const std::string & pieces) {
+
+   assert(sides.size() == Side_Size);
+   assert(pieces.size() == 5);
 
    std::string s;
 
-   s += (pos.turn() == White) ? "W" : "Z";
+   s += sides[pos.turn()];
 
-   for (int i = 0; i < 50; i++) {
+   for (int dense = 0; dense < Dense_Size; dense++) {
 
-      int sq = square_from_50(i);
+      Square sq = square_sparse(dense);
 
-      switch (pos_square(pos, sq)) {
-      case WM :    s += "w";      break;
-      case BM :    s += "z";      break;
-      case WK :    s += "W";      break;
-      case BK :    s += "Z";      break;
-      case Empty : s += "e";      break;
-      default :    assert(false); break;
-      }
+      Piece_Side ps = pos::piece_side(pos, sq);
+      s += pieces[ps];
    }
 
    return s;
 }
 
-// end of fen.cpp
+static int find(char c, const std::string & s) {
+
+   auto i = s.find(c);
+   if (i == std::string::npos) throw Bad_Input();
+
+   return i;
+}
 

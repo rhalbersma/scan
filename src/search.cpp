@@ -1,6 +1,4 @@
 
-// search.cpp
-
 // includes
 
 #include <algorithm>
@@ -10,63 +8,71 @@
 #include <sstream>
 #include <string>
 
-#include "bb_base.h"
-#include "board.h"
-#include "book.h"
-#include "eval.h"
-#include "hash.h"
+#include "bb_base.hpp"
+#include "book.hpp"
+#include "common.hpp"
+#include "eval.hpp"
+#include "hash.hpp"
+#include "hub.hpp"
 #include "libmy.hpp"
-#include "list.h"
-#include "move.h"
-#include "move_gen.h"
-#include "pos.h"
-#include "score.h"
-#include "search.h"
-#include "sort.h"
-#include "thread.h"
-#include "trans.h"
-#include "var.h"
+#include "list.hpp"
+#include "move.hpp"
+#include "move_gen.hpp"
+#include "pos.hpp"
+#include "score.hpp"
+#include "search.hpp"
+#include "sort.hpp"
+#include "thread.hpp"
+#include "tt.hpp"
+#include "var.hpp"
 
-// classes
+// types
 
 class Time {
 
 private :
 
-   double p_time_0;
-   double p_time_1;
+   double p_time_0; // target
+   double p_time_1; // extended
+   double p_time_2; // maximum
 
 public :
 
-   void init (const Board & bd);
+   void init (const Search_Input & si, const Pos & pos);
 
    double time_0 () const { return p_time_0; }
    double time_1 () const { return p_time_1; }
+   double time_2 () const { return p_time_2; }
 
 private :
 
    void init (double time);
-   void init (int moves, double time, double inc, const Board & bd);
+   void init (int moves, double time, double inc, const Pos & pos);
 };
 
 struct Local {
 
-   int alpha;
-   int beta;
-   int depth;
+   const Node * p_node; // HACK: should be private
+
+   Score alpha;
+   Score beta;
+   Depth depth;
+   Ply ply;
    bool pv_node;
-   bool safe;
    bool prune;
 
    List list;
    int i;
    int j;
 
-   move_t move;
-   int score;
+   Move move;
+   Score score;
    Line pv;
+
+   const Node & node () const { return *p_node; }
 };
 
+class Search_Global;
 class Search_Local;
 
 class Split_Point : public Lockable {
@@ -74,9 +80,7 @@ class Split_Point : public Lockable {
 private :
 
    Split_Point * p_parent;
-
-   Board p_board;
-   int p_ply;
+   Search_Global * p_sg;
 
    Local p_local;
 
@@ -86,15 +90,16 @@ private :
 public :
 
    void init_root  ();
-   void init       (Split_Point * parent, const Board & bd, int ply, const Local & local);
+   void init       (Split_Point * parent, Search_Global & sg, const Local & local);
    void get_result (Local & local);
 
    void enter ();
    void leave ();
 
-   move_t get_move   (Local & local);
-   void   stop_root  ();
-   void   put_result (move_t mv, int sc, const Line & pv);
+   Move get_move (Local & local);
+   void update   (Move mv, Score sc, const Line & pv);
+
+   void stop_root ();
 
    bool is_child (Split_Point * sp);
 
@@ -102,32 +107,24 @@ public :
    bool free () const { return p_workers == 0; }
 
    Split_Point * parent () const { return p_parent; }
-   const Board & board  () const { return p_board; }
-   int           ply    () const { return p_ply; }
    const Local & local  () const { return p_local; }
-
-private :
-
-   bool high () const { return p_local.score >= p_local.beta; }
 };
 
 class Search_Local : public Lockable {
 
 private :
 
+   static const int Pool_Size { 10 };
+
    std::thread p_thread;
    bool p_main;
 
    std::atomic<Split_Point *> p_work;
    ml::Array<Split_Point *, Ply_Size> p_stack;
-   Split_Point p_pool[Ply_Size];
+   Split_Point p_pool[Pool_Size];
    std::atomic<int> p_pool_size;
 
-   Board p_board;
-   int p_ply;
-
-   move_t p_move[Ply_Size];
-   Undo p_undo[Ply_Size];
+   Search_Global * p_sg;
 
    int64 p_node;
    int64 p_leaf;
@@ -135,14 +132,14 @@ private :
 
 public :
 
-   void init (int id);
+   void init (int id, Search_Global & sg);
    void end  ();
 
-   void new_iter   ();
-   void mid_search ();
+   void start_iter ();
+   void end_iter   (Search_Output & so);
 
-   void search_all  (const Board & bd, List & list, int depth);
-   void search_root (const Board & bd, const List & list, int depth);
+   void search_all_try  (const Node & node, List & list, Depth depth);
+   void search_root_try (const Node & node, const List & list, Depth depth);
 
    void give_work (Split_Point * sp);
 
@@ -151,36 +148,39 @@ public :
 
 private :
 
-   static void launch (Search_Local * sl);
+   static void launch (Search_Local * sl, Split_Point * root_sp);
 
    void idle_loop (Split_Point * wait_sp);
 
-   void join   (Split_Point * sp);
-   void search (Split_Point * sp);
+   void join      (Split_Point * sp);
+   void move_loop (Split_Point * sp);
 
-   void search_all  (List & list, int depth);
-   void search_root (const List & list, int alpha, int beta, int depth, bool prune);
-   int  search      (int alpha, int beta, int depth, bool prune, Line & pv);
-   void split       (Local & local);
-   int  search_move (move_t mv, const Local & local, Line & pv);
-   int  qs          (int alpha, int beta, Line & pv);
+   void  search_all  (const Node & node, List & list, Depth depth, Ply ply);
+   void  search_root (const Node & node, const List & list, Score alpha, Score beta, Depth depth, Ply ply, bool prune);
+   Score search      (const Node & node, Score alpha, Score beta, Depth depth, Ply ply, bool prune, Line & pv);
+   Score qs          (const Node & node, Score alpha, Score beta, Depth depth, Ply ply, Line & pv);
 
-   static int extend (move_t mv, const Pos & pos, const Local & local);
-   static int reduce (move_t mv, const Pos & pos, const Local & local);
+   void  move_loop   (Local & local);
+   Score search_move (Move mv, const Local & local, Line & pv);
 
-   void do_move   (move_t mv);
-   void undo_move (move_t mv);
+   void split (Local & local);
 
-   void mark_leaf ();
+   static Depth extend (Move mv, const Local & local);
+   static Depth reduce (Move mv, const Local & local);
 
-   int probe_bb ();
-   int eval     () const;
+   void inc_node ();
+
+   Score leaf      (Score sc, Ply ply);
+   void  mark_leaf (Ply ply);
+
+   static Score bb_probe (const Pos & pos, Ply ply);
+   static Score eval     (const Pos & pos);
 
    void poll ();
    bool stop () const;
 
    void push_sp (Split_Point * sp);
-   void pop_sp  ();
+   void pop_sp  (Split_Point * sp);
 
    Split_Point * top_sp () const;
 };
@@ -189,33 +189,43 @@ class Search_Global : public Lockable {
 
 private :
 
-   trans::Trans p_trans;
+   const Search_Input * p_si;
+   Search_Output * p_so;
 
-   Board p_board;
+   const Node * p_node;
    List p_list;
 
+   int p_bb_size;
+
    Search_Local p_sl[16];
+
+   Split_Point p_root_sp;
 
    std::atomic<bool> p_ponder;
    std::atomic<bool> p_flag;
 
+   Move p_last_move;
+   Score p_last_score;
+
    bool p_change;
    bool p_first;
    bool p_high;
+   bool p_drop;
+   double p_factor;
 
 public :
 
-   void new_search  ();
-   void init_search (const Board & bd, const List & list);
-   void mid_search  ();
-   void end_search  ();
+   void new_search    (int bb_size);
+   void init_search   (const Search_Input & si, Search_Output & so, const Node & node, const List & list);
+   void collect_stats ();
+   void end_search    ();
 
-   void start_iter (int depth);
-   void end_iter   (int depth);
+   void start_iter (Depth depth);
+   void end_iter   (Depth depth);
 
-   void search (int depth);
+   void search (Depth depth);
 
-   void new_best_move (move_t mv, int sc, int depth, const Line & pv);
+   void new_best_move (Move mv, Score sc, Depth depth, const Line & pv);
 
    void poll  ();
    void abort ();
@@ -223,21 +233,28 @@ public :
    bool has_worker () const;
    void broadcast  (Split_Point * sp);
 
+   Split_Point * root_sp () { return &p_root_sp; }
+
    void set_flag (bool flag) { p_flag = flag; }
 
    void set_first (bool first) { p_first = first; }
    void set_high  (bool high)  { p_high  = high; }
 
-   int    depth () const { return G_Search.depth(); }
-   double time  () const { return G_Search.time(); }
+   int    depth () const { return p_so->depth; }
+   double time  () const { return p_so->time(); }
 
    bool ponder () const { return p_ponder; }
 
-   bool change () const { return p_change; }
-   bool first  () const { return p_first; }
-   bool high   () const { return p_high; }
+   Move  last_move  () const { return p_last_move; }
+   Score last_score () const { return p_last_score; }
 
-   trans::Trans & trans () { return p_trans; }
+   bool   change () const { return p_change; }
+   bool   first  () const { return p_first; }
+   bool   high   () const { return p_high; }
+   bool   drop   () const { return p_drop; }
+   double factor () const { return p_factor; }
+
+   int bb_size () const { return p_bb_size; }
 
    const Search_Local & sl (int id) const { return p_sl[id]; }
          Search_Local & sl (int id)       { return p_sl[id]; }
@@ -248,107 +265,89 @@ struct SMP : public Lockable {
 };
 
 class Abort : public std::exception {
-
 };
 
 // variables
 
-Search_Info G_Search_Info;
-Search G_Search;
+static Time G_Time; // TODO: move to SG
 
-static Time G_Time;
-
-static Search_Global SG;
-static Split_Point Root_SP[1]; // to make it a "pointer"
-
-static SMP G_SMP; // lock to create and broadcast split points
-static Lockable IO;
+static SMP G_SMP; // lock to create and broadcast split points // MOVE ME to SG?
+static Lockable G_IO;
 
 // prototypes
 
 static void gen_moves_bb (List & list, const Pos & pos);
 
-static void disp_best_move (const Board & bd);
-
-static double alloc_moves (const Board & bd);
-static double alloc_early (const Board & bd);
-
 static double lerp (double mg, double eg, double phase);
 
 static double time_lag (double time);
 
+static void local_update (Local & local, Move mv, Score sc, const Line & pv, Search_Global & sg); // MOVE ME
+
 // functions
 
-void search_init() {
-
-   var::update();
-   SG.trans().set_size(var::Trans_Size);
-}
-
-void search_new_game() {
-
-   SG.trans().clear();
-}
-
-void search_id(const Board & bd) {
+void search(Search_Output & so, const Node & node, const Search_Input & si) {
 
    // init
 
    var::update();
 
-   Search_Info & si = G_Search_Info;
+   so.init(si, node);
 
-   if (pos_size(bd) <= si.bb_size()) { // only use smaller bitbases in search
-      SG.trans().clear(); // HACK #
-      si.set_bb_size(pos_size(bd) - 1);
+   int bb_size = var::BB_Size;
+
+   if (bb::pos_is_load(node)) { // root position already in bitbases => only use smaller bitbases in search
+      tt::G_TT.clear();
+      bb_size = pos::size(node) - 1;
    }
-
-   G_Search.init(bd);
 
    // special cases
 
    List list;
-   gen_moves_bb(list, bd);
+   gen_moves_bb(list, node);
    assert(list.size() != 0);
 
-   if (si.unique() && list.size() == 1) {
-      G_Search.new_best_move(list.move(0));
+   if (si.move && !si.ponder && list.size() == 1) {
+
+      Move mv = list.move(0);
+      Score sc = quick_score(node);
+
+      so.new_best_move(mv, sc);
       return;
    }
 
-   if (var::Book && si.book()) {
+   if (var::Book && si.book) {
 
-      int ply = 300 - board_pip(bd);
+      int ply = pos::stage(node);
       assert(ply >= 0);
 
-      int margin = (ply < 4) ? var::Book_Margin : 0;
-      move_t mv = book::move(bd, margin);
+      int margin = (ply < var::Book_Ply) ? var::Book_Margin : 0;
 
-      if (mv != Move_None) {
-         G_Search.new_best_move(mv);
+      Move mv;
+      Score sc;
+
+      if (book::probe(node, Score(margin), mv, sc)) {
+         so.new_best_move(mv, sc);
          return;
       }
    }
 
    // more init
 
-   G_Time.init(bd);
+   G_Time.init(si, node);
 
-   SG.new_search(); // also launches threads
+   Search_Global sg;
+   sg.new_search(bb_size); // also launches threads
+   sg.init_search(si, so, node, list);
 
-   move_t easy_move = Move_None;
+   Move easy_move = move::None;
 
    if (si.smart() && list.size() > 1) {
 
-      SG.sl(0).search_all(bd, list, 1);
+      sg.sl(0).search_all_try(node, list, Depth(1));
 
-      if (list.score(0) - list.score(1) >= +50) {
-
+      if (list.score(0) - list.score(1) >= +100 && list.move(0) == quick_move(node)) {
          easy_move = list.move(0);
-
-         if (easy_move != ponder_move(bd)) {
-            easy_move = Move_None;
-         }
       }
    }
 
@@ -356,100 +355,140 @@ void search_id(const Board & bd) {
 
    try {
 
-      SG.init_search(bd, list);
+      for (int d = 1; d <= si.depth; d++) {
 
-      for (int depth = 1; depth <= std::min(si.depth(), Depth_Max); depth++) {
+         Depth depth = Depth(d);
 
-         G_Search.start_iter(depth);
-         SG.start_iter(depth);
-         SG.search(depth);
-         SG.end_iter(depth);
-         G_Search.end_iter();
+         sg.start_iter(depth);
+         sg.search(depth);
+         sg.end_iter(depth);
+         sg.collect_stats();
 
-         move_t mv = G_Search.move();
-         double time = G_Search.time();
+         Move mv = so.move;
+         double time = so.time();
+         // if (true || time >= 0.01) so.disp_best_move();
 
          // early exit?
 
          bool abort = false;
 
-         if (mv == easy_move && !SG.change() && time >= G_Time.time_0() / 16.0) abort = true;
+         if (mv == easy_move && !sg.change() && time >= G_Time.time_0() / 16.0) abort = true;
 
-         if (si.smart() && time >= G_Time.time_0() * alloc_early(bd)) abort = true;
+         if (si.smart() && time >= G_Time.time_0() * sg.factor() * lerp(0.4, 0.8, pos::phase(node))) abort = true;
+
+         if (si.smart() && sg.drop()) abort = false;
 
          if (depth >= 12 && abort) {
-            SG.set_flag(true);
-            if (!SG.ponder()) break;
+            sg.set_flag(true);
+            if (!sg.ponder()) break;
          }
       }
 
    } catch (const Abort &) {
 
-      // disp_best_move(bd);
+      // so.disp_best_move();
    }
 
-   if (si.output() == Output_Terminal) {
-      std::cout << std::endl;
-   }
+   if (si.output == Output_Terminal) std::cout << std::endl;
 
-   SG.end_search(); // sync with threads
+   sg.end_search(); // sync with threads
 
-   G_Search.end();
+   so.end();
 }
 
-move_t ponder_move(const Board & bd) {
+Move quick_move(const Pos & pos) {
 
    // init
 
-   List list;
-   gen_moves_bb(list, bd);
+   if (pos::is_wipe(pos)) return move::None; // for BT variant
 
-   if (list.size() == 0) return Move_None;
+   List list;
+   gen_moves_bb(list, pos);
+
+   if (list.size() == 0) return move::None;
    if (list.size() == 1) return list.move(0);
 
    // book
 
    if (var::Book) {
-      move_t mv = book::move(bd, 0);
-      if (mv != Move_None) return mv;
+
+      Move mv;
+      Score sc;
+
+      if (book::probe(pos, Score(0), mv, sc)) {
+         return mv;
+      }
    }
 
    // transposition table
 
-   {
-      int trans_move = Index_None;
+   Move_Index tt_move = Move_Index_None;
 
-      int trans_depth, trans_flags, trans_score;
-      SG.trans().probe(bd.key(), trans_move, trans_depth, trans_flags, trans_score); // updates trans_move
+   Depth tt_depth;
+   tt::Flags tt_flags;
+   Score tt_score;
+   tt::G_TT.probe(hash::key(pos), tt_move, tt_depth, tt_flags, tt_score); // updates tt_move
 
-      if (trans_move != Index_None) {
-         sort_trans(list, bd, trans_move);
-         return list.move(0);
+   if (tt_move != Move_Index_None) {
+      Move mv = list::find_index(list, tt_move, pos);
+      if (mv != move::None) return mv;
+   }
+
+   return move::None;
+}
+
+Score quick_score(const Pos & pos) {
+
+   // book
+
+   if (var::Book) {
+
+      Move mv;
+      Score sc;
+
+      if (book::probe(pos, Score(0), mv, sc)) {
+         return sc;
       }
    }
 
-   return Move_None;
+   // TODO: BB (but: win/loss have no distance)
+
+   // transposition table
+
+   Move_Index tt_move = Move_Index_None;
+
+   Depth tt_depth;
+   tt::Flags tt_flags;
+   Score tt_score;
+
+   if (tt::G_TT.probe(hash::key(pos), tt_move, tt_depth, tt_flags, tt_score)) {
+      return score::from_tt(tt_score, Ply(0));
+   }
+
+   return score::None;
 }
 
 static void gen_moves_bb(List & list, const Pos & pos) {
 
-   if (var::BB && bb::pos_is_load(pos)) { // filter root moves using BB probes
+   if (bb::pos_is_load(pos)) { // root position already in bitbases
+
+      // filter root moves using BB probes
 
       list.clear();
 
-      int val = bb::probe(pos);
+      bb::Value node = bb::probe(pos);
 
       List tmp;
       gen_moves(tmp, pos);
 
       for (int i = 0; i < tmp.size(); i++) {
 
-         move_t mv = tmp.move(i);
+         Move mv = tmp.move(i);
 
-         Pos new_pos(pos, mv);
-         int new_val = bb::value_age(bb::probe(new_pos));
+         Pos new_pos = pos.succ(mv);
 
-         if (new_val == val) list.add(mv);
+         bb::Value child = bb::probe(new_pos);
+         if (bb::value_age(child) == node) list.add(mv); // optimal move
       }
 
    } else {
@@ -458,162 +497,145 @@ static void gen_moves_bb(List & list, const Pos & pos) {
    }
 }
 
-static void disp_best_move(const Board & bd) {
-
-   if (var::SMP) IO.lock();
-
-   const Search_Info & si = G_Search_Info;
-
-   double time = G_Search.time();
-   double speed = (time < 0.1) ? 0.0 : double(G_Search.node()) / time;
-   std::string pv = G_Search.pv().to_string(bd, 7);
-
-   switch (si.output()) {
-
-   case Output_None :
-
-      break;
-
-   case Output_Terminal :
-
-      std::printf("%2d/%4.1f%+7.2f%11lld%7.2f%5.1f  %s\n", G_Search.depth(), G_Search.ply_avg(), double(G_Search.score()) / 100.0, G_Search.node(), time, speed / 1E6, pv.c_str());
-      break;
-
-   case Output_Hub :
-
-      std::printf("info %d %.1f %d %lld %.2f %.1f %s\n", G_Search.depth(), G_Search.ply_avg(), G_Search.score(), G_Search.node(), time, speed / 1E6, pv.c_str());
-      std::fflush(stdout);
-      break;
-
-   default :
-
-      assert(false);
-   }
-
-   if (var::SMP) IO.unlock();
+static double lerp(double mg, double eg, double phase) {
+   assert(phase >= 0.0 && phase <= 1.0);
+   return mg + (eg - mg) * phase;
 }
 
-void Search_Info::init() {
+void Search_Input::init() {
 
    var::update();
 
-   p_unique = true;
-   p_book = true;
-   p_depth = Depth_Max;
-   p_input = false;
-   p_output = Output_None;
-   p_bb_size = var::BB_Size;
+   move = true;
+   book = true;
+   depth = Depth_Max;
+   input = false;
+   output = Output_None;
+   ponder = false;
 
    p_smart = false;
    p_moves = 0;
    p_time = 1E6;
    p_inc = 0.0;
-   p_ponder = false;
 }
 
-void Search_Info::set_time(double time) {
-
+void Search_Input::set_time(double time) {
    p_smart = false;
    p_time = time;
 }
 
-void Search_Info::set_time(int moves, double time, double inc) {
-
+void Search_Input::set_time(int moves, double time, double inc) {
    p_smart = true;
    p_moves = moves;
    p_time = time;
    p_inc = inc;
 }
 
-void Search::init(const Board & bd) {
+void Search_Output::init(const Search_Input & si, const Pos & pos) {
 
-   p_board = bd;
+   move = move::None;
+   answer = move::None;
+   score = Score(0);
+   depth = Depth(0);
+   pv.clear();
 
-   p_best.move = Move_None;
-   p_best.ponder = Move_None;
-   p_best.score = 0;
-   p_best.depth = 0;
-   p_best.pv.clear();
+   node = 0;
+   leaf = 0;
+   ply_sum = 0;
 
-   p_current.timer.reset();
-   p_current.timer.start();
-   p_current.depth = 0;
-   p_current.node_nb = 0;
-   p_current.leaf_nb = 0;
-   p_current.ply_sum = 0;
+   p_si = &si;
+   p_pos = pos;
+   p_timer.reset();
+   p_timer.start();
 }
 
-void Search::end() {
-
-   p_current.timer.stop();
+void Search_Output::end() {
+   p_timer.stop();
 }
 
-void Search::start_iter(int depth) {
-
-   p_current.depth = depth;
-}
-
-void Search::end_iter() {
-
-   SG.mid_search();
-}
-
-void Search::new_best_move(move_t mv) {
+void Search_Output::new_best_move(Move mv, Score sc) {
 
    Line pv;
    pv.set(mv);
 
-   new_best_move(mv, 0, 0, pv);
+   new_best_move(mv, sc, Depth(0), pv);
 
-   const Search_Info & si = G_Search_Info;
+   if (p_si->output == Output_Terminal) std::cout << std::endl;
+}
 
-   if (si.output() == Output_Terminal) {
-      std::cout << std::endl;
+void Search_Output::new_best_move(Move mv, Score sc, Depth depth, const Line & pv) {
+
+   if (pv.size() != 0) assert(pv[0] == mv);
+
+   move = mv;
+   answer = (pv.size() < 2) ? move::None : pv[1];
+   score = sc;
+   this->depth = depth;
+   this->pv = pv;
+
+   if (depth == 0 || depth >= 12) disp_best_move();
+}
+
+void Search_Output::disp_best_move() {
+
+   if (var::SMP) G_IO.lock();
+
+   double time = this->time();
+   double speed = (time < 0.01) ? 0.0 : double(node) / time;
+
+   switch (p_si->output) {
+
+      case Output_None :
+
+         // no-op
+         break;
+
+      case Output_Terminal :
+
+         std::printf("%2d/%4.1f%+7.2f%11lld%7.2f%5.1f  %s\n", depth, ply_avg(), double(score) / 100.0, node, time, speed / 1E6, pv.to_string(p_pos, 7).c_str());
+         std::fflush(stdout);
+         break;
+
+      case Output_Hub : {
+
+         std::string line = "info";
+         if (depth != 0)           hub::add_pair(line, "depth", std::to_string(depth));
+         if (ply_avg() != 0.0)     hub::add_pair(line, "mean-depth", ml::ftos(ply_avg(), 1));
+         if (score != score::None) hub::add_pair(line, "score", ml::ftos(double(score) / 100.0, 2));
+         if (node != 0)            hub::add_pair(line, "nodes", std::to_string(node));
+         if (time >= 0.001)        hub::add_pair(line, "time", ml::ftos(time, 3));
+         if (speed != 0.0)         hub::add_pair(line, "nps", ml::ftos(speed / 1E6, 1));
+         if (pv.size() != 0)       hub::add_pair(line, "pv", pv.to_hub());
+         hub::write(line);
+
+         break;
+      }
    }
+
+   if (var::SMP) G_IO.unlock();
 }
 
-void Search::new_best_move(move_t mv, int sc, int depth, const Line & pv) {
-
-   assert(depth == p_current.depth);
-   if (pv.size() != 0) assert(pv.move(0) == mv);
-
-   p_best.move = mv;
-   p_best.ponder = (pv.size() < 2) ? Move_None : pv.move(1);
-   p_best.score = sc;
-   p_best.depth = depth;
-   p_best.pv = pv;
-
-   if (depth == 0 || depth >= 12) disp_best_move(p_board);
-}
-
-double Search::time() const {
-
-   return p_current.timer.elapsed();
-}
-
-void Time::init(const Board & bd) {
-
-   const Search_Info & si = G_Search_Info;
+void Time::init(const Search_Input & si, const Pos & pos) {
 
    if (si.smart()) {
-      init(si.moves(), si.time(), si.inc(), bd);
+      init(si.moves(), si.time(), si.inc(), pos);
    } else {
       init(si.time());
    }
 }
 
 void Time::init(double time) {
-
    p_time_0 = time;
    p_time_1 = time;
+   p_time_2 = time;
 }
 
-void Time::init(int moves, double time, double inc, const Board & bd) {
+void Time::init(int moves, double time, double inc, const Pos & pos) {
 
-   double moves_left = alloc_moves(bd);
+   double moves_left = lerp(30.0, 10.0, pos::phase(pos));
    if (moves != 0) moves_left = std::min(moves_left, double(moves));
 
-   double factor = 1.2;
+   double factor = 1.3;
    if (var::Ponder) factor *= 1.2;
 
    double total = std::max(time + inc * moves_left, 0.0);
@@ -628,65 +650,59 @@ void Time::init(int moves, double time, double inc, const Board & bd) {
 
    p_time_0 = std::min(time_lag(alloc), max);
    p_time_1 = std::min(time_lag(alloc * 4.0), max);
+   p_time_2 = max;
 
-   assert(0.0 <= p_time_0 && p_time_0 <= p_time_1);
-}
-
-static double alloc_moves(const Board & bd) {
-
-   return lerp(30.0, 10.0, board_phase(bd));
-}
-
-static double alloc_early(const Board & bd) {
-
-   return lerp(0.4, 0.8, board_phase(bd));
-}
-
-static double lerp(double mg, double eg, double phase) {
-
-   assert(phase >= 0.0 && phase <= 1.0);
-   return mg + (eg - mg) * phase;
+   assert(0.0 <= p_time_0 && p_time_0 <= p_time_1 && p_time_1 <= p_time_2);
 }
 
 static double time_lag(double time) {
-
    return std::max(time - 0.1, 0.0);
 }
 
-void Search_Global::new_search() {
+void Search_Global::new_search(int bb_size) {
+
+   p_bb_size = bb_size;
 
    G_SMP.busy = false;
-   Root_SP->init_root();
+   p_root_sp.init_root();
 
    for (int id = 0; id < var::SMP_Threads; id++) {
-      sl(id).init(id); // also launches a thread if id /= 0
+      sl(id).init(id, *this); // also launches a thread if id /= 0
    }
 
-   trans().inc_date();
+   tt::G_TT.inc_date();
    sort_clear();
 }
 
-void Search_Global::init_search(const Board & bd, const List & list) {
+void Search_Global::init_search(const Search_Input & si, Search_Output & so, const Node & node, const List & list) {
 
-   p_board = bd;
+   p_si = &si;
+   p_so = &so;
+
+   p_node = &node;
    p_list = list;
 
-   p_ponder = G_Search_Info.ponder();
+   p_ponder = si.ponder;
    p_flag = false;
+
+   p_last_move = move::None;
+   p_last_score = score::None;
 
    p_change = false;
    p_first = false;
    p_high = false;
+   p_drop = false;
+   p_factor = 1.0;
 }
 
-void Search_Global::mid_search() {
+void Search_Global::collect_stats() {
 
-   G_Search.p_current.node_nb = 0;
-   G_Search.p_current.leaf_nb = 0;
-   G_Search.p_current.ply_sum = 0;
+   p_so->node = 0;
+   p_so->leaf = 0;
+   p_so->ply_sum = 0;
 
    for (int id = 0; id < var::SMP_Threads; id++) {
-      sl(id).mid_search();
+      sl(id).end_iter(*p_so);
    }
 }
 
@@ -694,43 +710,66 @@ void Search_Global::end_search() {
 
    abort();
 
-   Root_SP->leave();
-   assert(Root_SP->free());
+   p_root_sp.leave();
+   assert(p_root_sp.free());
 
    for (int id = 0; id < var::SMP_Threads; id++) {
       sl(id).end();
    }
 }
 
-void Search_Global::start_iter(int /* depth */) {
+void Search_Global::start_iter(Depth /* depth */) {
+
+   p_drop = false;
 
    for (int id = 0; id < var::SMP_Threads; id++) {
-      sl(id).new_iter();
+      sl(id).start_iter();
    }
 }
 
-void Search_Global::end_iter(int /* depth */) {
+void Search_Global::end_iter(Depth depth) {
 
+   // time management
+
+   Move  mv = p_so->move;
+   Score sc = p_so->score;
+
+   if (depth > 1 && mv == p_last_move) {
+      p_factor = std::max(p_factor * 0.9, 0.6);
+   }
+
+   p_last_move = mv;
+   p_last_score = sc;
 }
 
-void Search_Global::search(int depth) {
-
-   sl(0).search_root(p_board, p_list, depth);
+void Search_Global::search(Depth depth) {
+   sl(0).search_root_try(*p_node, p_list, depth);
 }
 
-void Search_Global::new_best_move(move_t mv, int sc, int depth, const Line & pv) {
+void Search_Global::new_best_move(Move mv, Score sc, Depth depth, const Line & pv) {
 
    if (var::SMP) lock();
 
-   move_t best = G_Search.move();
+   Move best = p_so->move;
 
-   mid_search(); // update search info
-   G_Search.new_best_move(mv, sc, depth, pv);
+   collect_stats(); // update search info
+   p_so->new_best_move(mv, sc, depth, pv);
 
-   int i = list_find(p_list, mv);
+   int i = list::find(p_list, mv);
    p_list.mtf(i);
 
    if (depth > 1 && mv != best) {
+
+      p_flag = false;
+      p_change = true;
+
+      p_factor = std::max(p_factor, 1.0);
+      p_factor = std::min(p_factor * 1.2, 2.0);
+   }
+
+   p_drop = sc - p_last_score <= ((var::Variant == var::Normal) ? -10 : -20);
+
+   if (p_drop) {
       p_flag = false;
       p_change = true;
    }
@@ -740,22 +779,16 @@ void Search_Global::new_best_move(move_t mv, int sc, int depth, const Line & pv)
 
 void Search_Global::poll() {
 
-   const Search_Info & si = G_Search_Info;
-
    bool abort = false;
 
    // input event?
 
-   if (var::SMP) IO.lock();
+   if (var::SMP) G_IO.lock();
 
-   if (si.input() && has_input()) {
+   if (p_si->input && has_input()) {
 
       std::string line;
-      if (!peek_line(line)) { // EOF
-         std::exit(EXIT_SUCCESS);
-      }
-
-      std::cout << "input \"" << line << "\"" << std::endl;
+      if (!peek_line(line)) std::exit(EXIT_SUCCESS); // EOF
 
       std::stringstream ss(line);
 
@@ -768,14 +801,14 @@ void Search_Global::poll() {
       } else if (command == "ponder-hit") {
          get_line(line);
          p_ponder = false;
-         if (p_flag) abort = true;
+         if (p_flag || p_list.size() == 1) abort = true;
       } else { // other command => abort search
          p_ponder = false;
          abort = true;
       }
    }
 
-   if (var::SMP) IO.unlock();
+   if (var::SMP) G_IO.unlock();
 
    // time limit?
 
@@ -785,9 +818,9 @@ void Search_Global::poll() {
       // no-op
    } else if (time >= G_Time.time_1()) {
       abort = true;
-   } else if (si.smart() && !first()) {
+   } else if (p_si->smart() && !first()) {
       // no-op
-   } else if (time >= G_Time.time_0()) {
+   } else if (time >= G_Time.time_0() * factor()) {
       abort = true;
    }
 
@@ -798,8 +831,7 @@ void Search_Global::poll() {
 }
 
 void Search_Global::abort() {
-
-   Root_SP->stop_root();
+   p_root_sp.stop_root();
 }
 
 bool Search_Global::has_worker() const {
@@ -820,49 +852,46 @@ void Search_Global::broadcast(Split_Point * sp) {
    }
 }
 
-void Search_Local::init(int id) {
+void Search_Local::init(int id, Search_Global & sg) {
 
    p_main = id == 0;
 
-   p_work = Root_SP; // to make it non-null
+   p_work = sg.root_sp(); // to make it non-null
    p_stack.clear();
    p_pool_size = 0;
 
-   p_ply = 0;
+   p_sg = &sg;
 
    p_node = 0;
    p_leaf = 0;
    p_ply_sum = 0;
 
    if (var::SMP && !p_main) {
-      p_thread = std::thread(launch, this);
+      p_thread = std::thread(launch, this, sg.root_sp());
    }
 }
 
-void Search_Local::launch(Search_Local * sl) {
-   sl->idle_loop(Root_SP);
+void Search_Local::launch(Search_Local * sl, Split_Point * root_sp) {
+   sl->idle_loop(root_sp);
 }
 
 void Search_Local::end() {
-
-   if (var::SMP && !p_main) {
-      p_thread.join();
-   }
+   if (var::SMP && !p_main) p_thread.join();
 }
 
-void Search_Local::new_iter() {
+void Search_Local::start_iter() {
 
    // p_node = 0;
    p_leaf = 0;
    p_ply_sum = 0;
 }
 
-void Search_Local::mid_search() {
+void Search_Local::end_iter(Search_Output & so) {
 
    if (var::SMP || p_main) {
-      G_Search.p_current.node_nb += p_node;
-      G_Search.p_current.leaf_nb += p_leaf;
-      G_Search.p_current.ply_sum += p_ply_sum;
+      so.node += p_node;
+      so.leaf += p_leaf;
+      so.ply_sum += p_ply_sum;
    }
 }
 
@@ -872,22 +901,22 @@ void Search_Local::idle_loop(Split_Point * wait_sp) {
 
    while (true) {
 
-      assert(p_work == Root_SP);
-      p_work = NULL;
+      assert(p_work == p_sg->root_sp());
+      p_work = nullptr;
 
-      while (!wait_sp->free() && p_work.load() == NULL) // spin
+      while (!wait_sp->free() && p_work.load() == nullptr) // spin
          ;
 
-      Split_Point * work = p_work.exchange(Root_SP); // to make it non-null
-      if (work == NULL) break;
+      Split_Point * work = p_work.exchange(p_sg->root_sp()); // to make it non-null
+      if (work == nullptr) break;
 
       join(work);
    }
 
-   pop_sp();
+   pop_sp(wait_sp);
 
    assert(wait_sp->free());
-   assert(p_work == Root_SP);
+   assert(p_work == p_sg->root_sp());
 }
 
 void Search_Local::give_work(Split_Point * sp) {
@@ -896,7 +925,7 @@ void Search_Local::give_work(Split_Point * sp) {
 
       sp->enter();
 
-      assert(p_work.load() == NULL);
+      assert(p_work.load() == nullptr);
       p_work = sp;
    }
 }
@@ -911,91 +940,81 @@ bool Search_Local::idle(Split_Point * parent) const {
 }
 
 bool Search_Local::idle() const {
-
-   return p_work.load() == NULL;
+   return p_work.load() == nullptr;
 }
 
-void Search_Local::search_all(const Board & bd, List & list, int depth) {
+void Search_Local::search_all_try(const Node & node, List & list, Depth depth) {
 
    assert(depth > 0 && depth <= Depth_Max);
    assert(list.size() != 0);
 
-   p_board = bd;
-   p_ply = 0;
-
    assert(p_stack.empty());
-   push_sp(Root_SP);
+   push_sp(p_sg->root_sp());
 
    try {
-      search_all(list, depth);
+      search_all(node, list, depth, Ply(0));
    } catch (const Abort &) {
-      pop_sp();
+      pop_sp(p_sg->root_sp());
       assert(p_stack.empty());
       throw;
    }
 
-   pop_sp();
+   pop_sp(p_sg->root_sp());
    assert(p_stack.empty());
 }
 
-void Search_Local::search_root(const Board & bd, const List & list, int depth) {
+void Search_Local::search_root_try(const Node & node, const List & list, Depth depth) {
 
    assert(depth > 0 && depth <= Depth_Max);
    assert(list.size() != 0);
 
-   p_board = bd;
-   p_ply = 0;
-
    assert(p_stack.empty());
-   push_sp(Root_SP);
+   push_sp(p_sg->root_sp());
 
    try {
-      search_root(list, -score::Inf, +score::Inf, depth, true);
+      search_root(node, list, -score::Inf, +score::Inf, depth, Ply(0), true);
    } catch (const Abort &) {
-      pop_sp();
+      pop_sp(p_sg->root_sp());
       assert(p_stack.empty());
       throw;
    }
 
-   pop_sp();
+   pop_sp(p_sg->root_sp());
    assert(p_stack.empty());
 }
 
 void Search_Local::join(Split_Point * sp) {
 
-   p_board = sp->board();
-   p_ply = sp->ply();
-
    // sp->enter();
    push_sp(sp);
 
    try {
-      search(sp);
+      move_loop(sp);
    } catch (const Abort &) {
       // no-op
    }
 
-   pop_sp();
+   pop_sp(sp);
    sp->leave();
 }
 
-void Search_Local::search(Split_Point * sp) {
+void Search_Local::move_loop(Split_Point * sp) {
 
-   Local local = sp->local();
+   Local local = sp->local(); // local copy
 
    while (true) {
 
-      move_t mv = sp->get_move(local); // also updates "local"
-      if (mv == Move_None) break;
+      Move mv = sp->get_move(local); // also updates "local"
+      if (mv == move::None) break;
 
       Line pv;
-      int sc = search_move(mv, local, pv);
+      Score sc = search_move(mv, local, pv);
 
-      sp->put_result(mv, sc, pv);
+      sp->update(mv, sc, pv);
    }
 }
 
-void Search_Local::search_all(List & list, int depth) {
+void Search_Local::search_all(const Node & node, List & list, Depth depth, Ply ply) {
 
    assert(depth > 0 && depth <= Depth_Max);
 
@@ -1011,13 +1030,13 @@ void Search_Local::search_all(List & list, int depth) {
 
       // search move
 
-      move_t mv = list.move(i);
+      Move mv = list.move(i);
 
       Line pv;
 
-      do_move(mv);
-      int sc = -search(-score::Inf, +score::Inf, depth - 1, prune, pv);
-      undo_move(mv);
+      inc_node();
+      Node new_node = node.succ(mv);
+      Score sc = -search(new_node, -score::Inf, +score::Inf, depth - Depth(1), ply + Ply(1), prune, pv);
 
       // update state
 
@@ -1027,7 +1046,7 @@ void Search_Local::search_all(List & list, int depth) {
    list.sort();
 }
 
-void Search_Local::search_root(const List & list, int alpha, int beta, int depth, bool prune) {
+void Search_Local::search_root(const Node & node, const List & list, Score alpha, Score beta, Depth depth, Ply ply, bool prune) {
 
    assert(-score::Inf <= alpha && alpha < beta && beta <= +score::Inf);
    assert(depth > 0 && depth <= Depth_Max);
@@ -1038,114 +1057,79 @@ void Search_Local::search_root(const List & list, int alpha, int beta, int depth
 
    Local local;
 
+   local.p_node = &node;
    local.alpha = alpha;
    local.beta = beta;
    local.depth = depth;
-   local.pv_node = beta != alpha + 1;
-   local.safe = local.pv_node;
+   local.ply = ply;
+   local.pv_node = beta != alpha + Score(1);
    local.prune = prune;
 
-   local.list = list;
-
-   local.move = Move_None;
+   local.move = move::None;
    local.score = score::None;
    local.pv.clear();
 
    // move loop
 
-   local.j = 0;
+   local.list = list;
 
-   for (local.i = 0; local.i < local.list.size(); local.i++) {
-
-      int searched_size = local.j;
-
-      SG.set_first(searched_size == 0);
-
-      if (var::SMP && local.depth >= 4 && searched_size != 0 && local.list.size() - searched_size >= 3 && SG.has_worker()) {
-         split(local);
-         break; // share the epilogue
-      }
-
-      // search move
-
-      move_t mv = local.list.move(local.i);
-
-      Line pv;
-      int sc = search_move(mv, local, pv);
-
-      // update state
-
-      local.j++;
-
-      if (sc > local.score) {
-
-         local.move = mv;
-         local.score = sc;
-         local.pv.cat(mv, pv);
-
-         assert(p_ply == 0); // root event
-         SG.new_best_move(local.move, local.score, local.depth, local.pv);
-
-         if (sc >= local.beta) break;
-      }
-   }
+   move_loop(local);
 }
 
-int Search_Local::search(int alpha, int beta, int depth, bool prune, Line & pv) {
+Score Search_Local::search(const Node & node, Score alpha, Score beta, Depth depth, Ply ply, bool prune, Line & pv) {
 
    assert(-score::Inf <= alpha && alpha < beta && beta <= +score::Inf);
-   assert(depth >= 0 && depth <= Depth_Max);
+   assert(depth <= Depth_Max);
 
    assert(!p_stack.empty());
-   assert(p_stack[0] == Root_SP);
+   assert(p_stack[0] == p_sg->root_sp());
 
    // QS
 
    pv.clear();
 
-   Board & bd = p_board;
+   if (node.is_draw(2)) return leaf(Score(0), ply);
 
-   if (bd.is_draw(2)) {
-      mark_leaf();
-      return 0;
-   }
+   if (depth <= 0) return qs(node, alpha, beta, Depth(0), ply, pv);
 
-   if (depth <= 0) return qs(alpha, beta, pv);
+   if (pos::is_wipe(node)) return leaf(score::loss(ply), ply); // for BT variant
 
    // init
 
    Local local;
 
+   local.p_node = &node;
    local.alpha = alpha;
    local.beta = beta;
    local.depth = depth;
-   local.pv_node = beta != alpha + 1;
-   local.safe = local.pv_node;
+   local.ply = ply;
+   local.pv_node = beta != alpha + Score(1);
    local.prune = prune;
 
-   local.move = Move_None;
+   local.move = move::None;
    local.score = score::None;
    local.pv.clear();
 
    // transposition table
 
-   int trans_move = Index_None;
-   uint64 key = bd.key();
+   Move_Index tt_move = Move_Index_None;
+   Key key = hash::key(node);
 
    {
-      int trans_depth, trans_flags, trans_score;
+      Depth tt_depth;
+      tt::Flags tt_flags;
+      Score tt_score;
 
-      if (SG.trans().probe(key, trans_move, trans_depth, trans_flags, trans_score)) {
+      if (tt::G_TT.probe(key, tt_move, tt_depth, tt_flags, tt_score)) {
 
-         if (!local.safe && trans_depth >= local.depth) {
+         if (!local.pv_node && tt_depth >= local.depth) {
 
-            trans_score = score::from_trans(trans_score, p_ply);
+            tt_score = score::from_tt(tt_score, local.ply);
 
-            if ((trans::is_lower(trans_flags) && trans_score >= local.beta)
-             || (trans::is_upper(trans_flags) && trans_score <= local.alpha)
-             ||  trans::is_exact(trans_flags)) {
-               // mark_leaf();
-               return trans_score;
+            if ((tt::is_lower(tt_flags) && tt_score >= local.beta)
+             || (tt::is_upper(tt_flags) && tt_score <= local.alpha)
+             ||  tt::is_exact(tt_flags)) {
+               return tt_score;
             }
          }
       }
@@ -1153,46 +1137,51 @@ int Search_Local::search(int alpha, int beta, int depth, bool prune, Line & pv) 
 
    // bitbases
 
-   if (var::BB && bb::pos_is_search(bd)) {
-      local.score = qs(local.alpha, local.beta, local.pv);
-      goto cont;
+   if (bb::pos_is_search(node, p_sg->bb_size())) {
+
+      Line new_pv;
+      Score sc = qs(node, local.alpha, local.beta, Depth(0), local.ply, new_pv); // captures + BB probe
+
+      if ((sc < 0 && sc <= local.alpha) || sc == 0 || (sc > 0 && sc >= local.beta)) {
+         local.score = sc;
+         local.pv = new_pv;
+         goto cont;
+      }
+
+      if (sc > 0) { // win => lower bound
+         local.score = sc;
+         local.pv = new_pv;
+      }
    }
 
    // gen moves
 
-   gen_moves(local.list, bd);
+   gen_moves(local.list, node);
 
-   if (local.list.size() == 0) { // no legal move => loss
-      mark_leaf();
-      return score::loss(p_ply);
+   if (local.list.size() == 0) { // no legal moves => loss
+      return leaf(score::loss(local.ply), local.ply);
    }
 
-   if (score::loss(p_ply + 2) >= local.beta) { // loss-distance pruning
-      mark_leaf();
-      return score::loss(p_ply + 2);
+   if (score::loss(local.ply + Ply(2)) >= local.beta) { // loss-distance pruning
+      return leaf(score::loss(local.ply + Ply(2)), local.ply);
    }
 
-   if (p_ply >= Ply_Max) {
-      mark_leaf();
-      return eval();
-   }
+   if (local.ply >= Ply_Max) return leaf(eval(node), local.ply);
 
    // pruning
 
-   if (local.prune && !local.safe && local.depth >= 3 && local.beta <= +score::Eval_Inf) {
+   if (local.prune && !local.pv_node && local.depth >= 3 && local.beta <= +score::Eval_Inf) {
 
-      int margin = local.depth * 5;
-      int new_beta = score::add(local.beta, +margin);
-
-      int new_depth = local.depth * 40 / 100;
-      assert(new_depth > 0);
+      Score margin = Score(10 * local.depth);
+      Score new_beta = score::add_safe(local.beta, +margin);
+      Depth new_depth = Depth(local.depth * 40 / 100);
 
       Line new_pv;
-      int sc = search(new_beta - 1, new_beta, new_depth, false, new_pv);
+      Score sc = search(node, new_beta - Score(1), new_beta, new_depth, local.ply + Ply(1), false, new_pv);
 
       if (sc >= new_beta) {
 
-         sc = score::add(sc, -margin); // fail-soft margin
+         sc = score::add_safe(sc, -margin); // fail-soft margin
          assert(sc >= local.beta);
 
          pv = new_pv;
@@ -1200,81 +1189,48 @@ int Search_Local::search(int alpha, int beta, int depth, bool prune, Line & pv) 
       }
    }
 
-   // move ordering
-
-   sort_all(local.list, bd, trans_move);
-
    // move loop
 
-   local.j = 0;
+   sort_all(local.list, node, tt_move);
+   move_loop(local);
 
-   for (local.i = 0; local.i < local.list.size(); local.i++) {
+cont : // epilogue
 
-      int searched_size = local.j;
-
-      if (var::SMP && local.depth >= 4 && searched_size != 0 && local.list.size() - searched_size >= 3 && SG.has_worker()) {
-         split(local);
-         break; // share the epilogue
-      }
-
-      // search move
-
-      move_t mv = local.list.move(local.i);
-
-      Line new_pv;
-      int sc = search_move(mv, local, new_pv);
-
-      // update state
-
-      local.j++;
-
-      if (sc > local.score) {
-
-         local.move = mv;
-         local.score = sc;
-         local.pv.cat(mv, new_pv);
-
-         assert(p_ply != 0); // root event
-
-         if (sc >= local.beta) break;
-      }
-   }
-
-cont :
-
-   assert(local.score >= -score::Inf && local.score <= +score::Inf);
+   assert(score::is_ok(local.score));
 
    // transposition table
 
    {
-      int trans_move = Index_None;
-      if (local.score > local.alpha && local.move != Move_None) {
-         trans_move = move_index(local.move, bd);
+      Move_Index tt_move = Move_Index_None;
+      if (local.score > local.alpha && local.move != move::None) {
+         tt_move = move::index(local.move, node);
       }
 
-      int trans_flags = 0;
-      if (local.score > local.alpha) trans_flags |= trans::Lower_Flag;
-      if (local.score < local.beta)  trans_flags |= trans::Upper_Flag;
+      Depth tt_depth = local.depth;
 
-      int trans_score = score::to_trans(local.score, p_ply);
+      tt::Flags tt_flags = tt::Flags_None;
+      if (local.score > local.alpha) tt_flags |= tt::Flags_Lower;
+      if (local.score < local.beta)  tt_flags |= tt::Flags_Upper;
 
-      SG.trans().store(key, trans_move, local.depth, trans_flags, trans_score);
+      Score tt_score = score::to_tt(local.score, local.ply);
+
+      tt::G_TT.store(key, tt_move, tt_depth, tt_flags, tt_score);
    }
 
    // move-ordering statistics
 
-   if (local.score > local.alpha && local.move != Move_None) {
+   if (local.score > local.alpha && local.move != move::None && local.list.size() > 1) {
 
-      good_move(move_index(local.move, bd));
+      good_move(move::index(local.move, node));
 
-      assert(list_has(local.list, local.move));
+      assert(list::has(local.list, local.move));
 
       for (int i = 0; i < local.list.size(); i++) {
 
-         move_t mv = local.list.move(i);
+         Move mv = local.list.move(i);
          if (mv == local.move) break;
 
-         bad_move(move_index(mv, bd));
+         bad_move(move::index(mv, node));
       }
    }
 
@@ -1282,9 +1238,155 @@ cont :
    return local.score;
 }
 
+void Search_Local::move_loop(Local & local) {
+
+   local.i = 0;
+   local.j = 0;
+
+   while (local.score < local.beta && local.i < local.list.size()) {
+
+      int searched_size = local.j;
+
+      if (local.ply == 0) { // root event
+         p_sg->set_first(searched_size == 0);
+      }
+
+      // SMP
+
+      if (var::SMP && local.depth >= 6 && searched_size != 0 && local.list.size() - searched_size >= 5 && p_sg->has_worker() && p_pool_size < Pool_Size) {
+         split(local);
+         break; // share the epilogue
+      }
+
+      // search move
+
+      Move mv = local.list.move(local.i++);
+
+      Line pv;
+      Score sc = search_move(mv, local, pv);
+
+      local_update(local, mv, sc, pv, *p_sg);
+   }
+}
+
+Score Search_Local::search_move(Move mv, const Local & local, Line & pv) {
+
+   // init
+
+   int searched_size = local.j;
+
+   Depth ext = extend(mv, local);
+   Depth red = reduce(mv, local);
+   assert(ext == 0 || red == 0);
+
+   Score new_alpha = std::max(local.alpha, local.score);
+   Depth new_depth = local.depth + ext - Depth(1);
+
+   assert(new_alpha < local.beta);
+
+   // search move
+
+   Score sc;
+
+   inc_node();
+   Node new_node = local.node().succ(mv);
+
+   if ((local.pv_node && searched_size != 0) || red != 0) {
+
+      sc = -search(new_node, -new_alpha - Score(1), -new_alpha, new_depth - red, local.ply + Ply(1), local.prune, pv);
+
+      if (sc > new_alpha) { // PVS/LMR re-search
+
+         if (local.ply == 0) p_sg->set_high(true);
+         sc = -search(new_node, -local.beta, -new_alpha, new_depth, local.ply + Ply(1), local.prune, pv);
+         if (local.ply == 0) p_sg->set_high(false);
+      }
+
+   } else {
+
+      sc = -search(new_node, -local.beta, -new_alpha, new_depth, local.ply + Ply(1), local.prune, pv);
+   }
+
+   return sc;
+}
+
+Score Search_Local::qs(const Node & node, Score alpha, Score beta, Depth depth, Ply ply, Line & pv) {
+
+   assert(-score::Inf <= alpha && alpha < beta && beta <= +score::Inf);
+   assert(depth <= 0);
+
+   // init
+
+   pv.clear();
+
+   if (pos::is_wipe(node)) return leaf(score::loss(ply), ply);
+
+   if (ply >= Ply_Max) return leaf(eval(node), ply);
+
+   // move-loop init
+
+   Score bs = score::None;
+
+   List list;
+   gen_captures(list, node);
+
+   if (list.size() == 0) { // quiet position
+
+      // bitbases
+
+      if (bb::pos_is_search(node, p_sg->bb_size())) {
+         return leaf(bb_probe(node, ply), ply);
+      }
+
+      // threat position?
+
+      if (depth == 0 && pos::is_threat(node)) {
+         return search(node, alpha, beta, Depth(1), ply + Ply(1), false, pv); // one-ply search
+      }
+
+      // stand pat
+
+      Score sc = eval(node);
+
+      bs = sc;
+
+      if (sc >= beta) return leaf(sc, ply);
+
+      list.clear();
+      if (var::Variant == var::BT) gen_promotions(list, node);
+      if (!pos::has_king(node) && !pos::is_threat(node)) add_sacs(list, node);
+   }
+
+   // move loop
+
+   for (int i = 0; i < list.size(); i++) {
+
+      Move mv = list.move(i);
+
+      Line new_pv;
+
+      inc_node();
+      Node new_node = node.succ(mv);
+      Score sc = -qs(new_node, -beta, -std::max(alpha, bs), depth - Depth(1), ply + Ply(1), new_pv);
+
+      if (sc > bs) {
+
+         bs = sc;
+         pv.concat(mv, new_pv);
+
+         if (sc >= beta) break;
+      }
+   }
+
+   if (list.size() == 0) mark_leaf(ply);
+
+   assert(score::is_ok(bs));
+   return bs;
+}
+
 void Search_Local::split(Local & local) {
 
-   SG.poll();
+   p_sg->poll();
    poll();
 
    G_SMP.lock(); // useful?
@@ -1292,10 +1394,11 @@ void Search_Local::split(Local & local) {
    assert(!G_SMP.busy);
    G_SMP.busy = true;
 
+   assert(p_pool_size < Pool_Size);
    Split_Point * sp = &p_pool[p_pool_size++];
-   sp->init(top_sp(), p_board, p_ply, local);
+   sp->init(top_sp(), *p_sg, local);
 
-   SG.broadcast(sp);
+   p_sg->broadcast(sp);
 
    assert(G_SMP.busy);
    G_SMP.busy = false;
@@ -1305,220 +1408,77 @@ void Search_Local::split(Local & local) {
    join(sp);
    idle_loop(sp);
 
-   p_board = sp->board();
-   p_ply = sp->ply();
-
    sp->get_result(local);
 
+   assert(p_pool_size > 0);
    p_pool_size--;
    assert(sp == &p_pool[p_pool_size]);
 
    poll();
 }
 
-int Search_Local::search_move(move_t mv, const Local & local, Line & pv) {
-
-   // init
-
-   Board & bd = p_board;
-
-   int searched_size = local.j;
-
-   int ext = extend(mv, bd, local);
-   int red = reduce(mv, bd, local);
-   assert(ext == 0 || red == 0);
-
-   int new_alpha = std::max(local.alpha, local.score);
-   int new_depth = local.depth + ext - 1;
-
-   assert(new_alpha < local.beta);
-
-   // search move
-
-   int sc;
-
-   do_move(mv);
-
-   if ((local.pv_node && searched_size != 0) || red != 0) {
-
-      sc = -search(-new_alpha - 1, -new_alpha, new_depth - red, local.prune, pv);
-
-      if (sc > new_alpha) { // PVS/LMR re-search
-         if (p_ply == 0) SG.set_high(true);
-         sc = -search(-local.beta, -new_alpha, new_depth, local.prune, pv);
-         if (p_ply == 0) SG.set_high(false);
-      }
-
-   } else {
-
-      sc = -search(-local.beta, -new_alpha, new_depth, local.prune, pv);
-   }
-
-   undo_move(mv);
-
-   return sc;
+Depth Search_Local::extend(Move mv, const Local & local) {
+   return (local.list.size() == 1) ? Depth(1) : Depth(0);
 }
 
-int Search_Local::qs(int alpha, int beta, Line & pv) {
-
-   assert(-score::Inf <= alpha && alpha < beta && beta <= +score::Inf);
-
-   Board & bd = p_board;
-
-   // init
-
-   pv.clear();
-
-   if (board_is_wipe(bd)) {
-      mark_leaf();
-      return score::loss(p_ply);
-   }
-
-   if (p_ply >= Ply_Max) {
-      mark_leaf();
-      return eval();
-   }
-
-   // move-loop init
-
-   int bs = score::None;
-
-   List list;
-   gen_captures(list, bd);
-
-   if (list.size() == 0) { // quiet position
-
-      // bitbases
-
-      if (var::BB && bb::pos_is_search(bd)) {
-         mark_leaf();
-         return probe_bb();
-      }
-
-      // stand pat
-
-      int sc = eval();
-
-      bs = sc;
-
-      if (sc > alpha) {
-
-         alpha = sc;
-
-         if (sc >= beta) {
-            mark_leaf();
-            return sc;
-         }
-      }
-
-      gen_promotions(list, bd);
-      if (!pos_has_king(bd)) add_exchanges(list, bd);
-   }
-
-   // move loop
-
-   for (int i = 0; i < list.size(); i++) {
-
-      move_t mv = list.move(i);
-
-      Line new_pv;
-
-      do_move(mv);
-      int sc = -qs(-beta, -alpha, new_pv);
-      undo_move(mv);
-
-      if (sc > bs) {
-
-         bs = sc;
-         pv.cat(mv, new_pv);
-
-         if (sc > alpha) {
-            alpha = sc;
-            if (sc >= beta) break;
-         }
-      }
-   }
-
-   if (list.size() == 0) mark_leaf();
-
-   assert(bs >= -score::Inf && bs <= +score::Inf);
-   return bs;
-}
-
-int Search_Local::extend(move_t /* mv */ , const Pos & /* pos */, const Local & local) {
-
-   return (local.list.size() == 1) ? 1 : 0;
-}
-
-int Search_Local::reduce(move_t mv, const Pos & pos, const Local & local) {
+Depth Search_Local::reduce(Move mv, const Local & local) {
 
    int red = 0;
 
-   if (local.depth >= 3
-    && local.j >= (local.safe ? 3 : 1)
-    && !move_is_capture(mv, pos)
-    && !move_is_promotion(mv, pos)
+   if (local.depth >= 2
+    && local.j >= (local.pv_node ? 3 : 1)
+    && !move::is_capture(mv, local.node())
+    && !move::is_promotion(mv, local.node())
     ) {
 
-      red++;
-      if (!local.safe && local.j >= 6) red++;
+      if (!local.pv_node && local.j >= 4) {
+         red = 2;
+      } else { // includes PV nodes
+         red = 1;
+      }
    }
 
-   return red;
+   return Depth(red);
 }
 
-void Search_Local::do_move(move_t mv) {
-
+void Search_Local::inc_node() {
    p_node++;
-   if ((p_node & bit_mask(12)) == 0) SG.poll();
-   if ((p_node & bit_mask( 8)) == 0) poll();
-
-   assert(p_ply < Ply_Max);
-   p_move[p_ply] = mv;
-   p_board.do_move(mv, p_undo[p_ply]);
-   p_ply++;
+   if ((p_node & ml::bit_mask(12)) == 0) p_sg->poll();
+   if ((p_node & ml::bit_mask( 8)) == 0) poll();
 }
 
-void Search_Local::undo_move(move_t mv) {
-
-   assert(p_ply > 0);
-   p_ply--;
-   assert(mv == p_move[p_ply]);
-   p_board.undo_move(mv, p_undo[p_ply]);
+Score Search_Local::leaf(Score sc, Ply ply) {
+   assert(score::is_ok(sc));
+   mark_leaf(ply);
+   return sc;
 }
 
-void Search_Local::mark_leaf() {
-
+void Search_Local::mark_leaf(Ply ply) {
    p_leaf++;
-   p_ply_sum += p_ply;
+   p_ply_sum += ply;
 }
 
-int Search_Local::probe_bb() {
+Score Search_Local::bb_probe(const Pos & pos, Ply ply) {
 
-   int val = bb::probe_raw(p_board);
-
-   if (val == bb::Win) {
-      return +score::BB_Inf - p_ply;
-   } else if (val == bb::Loss) {
-      return -score::BB_Inf + p_ply;
-   } else {
-      return 0;
+   switch (bb::probe_raw(pos)) {
+      case bb::Win  : return +score::BB_Inf - Score(ply);
+      case bb::Loss : return -score::BB_Inf + Score(ply);
+      case bb::Draw : return Score(0);
+      default :       assert(false); return Score(0);
    }
 }
 
-int Search_Local::eval() const {
-
-   return ::eval(p_board);
+Score Search_Local::eval(const Pos & pos) {
+   return ::eval(pos, pos.turn());
 }
 
 void Search_Local::poll() {
-
    if (stop()) throw Abort();
 }
 
 bool Search_Local::stop() const {
 
-   for (Split_Point * sp = top_sp(); sp != NULL; sp = sp->parent()) {
+   for (Split_Point * sp = top_sp(); sp != nullptr; sp = sp->parent()) {
       if (sp->stop()) return true;
    }
 
@@ -1528,13 +1488,21 @@ bool Search_Local::stop() const {
 void Search_Local::push_sp(Split_Point * sp) {
 
    lock();
+
+   if (!p_stack.empty()) { // for debug
+      Split_Point * top = top_sp();
+      assert(sp->is_child(top));
+   }
+
    p_stack.add(sp);
+
    unlock();
 }
 
-void Search_Local::pop_sp() {
+void Search_Local::pop_sp(Split_Point * sp) { // sp for debug
 
    lock();
+   assert(top_sp() == sp);
    p_stack.remove();
    unlock();
 }
@@ -1547,22 +1515,18 @@ Split_Point * Search_Local::top_sp() const {
 
 void Split_Point::init_root() {
 
-   p_parent = NULL;
-
-   p_ply = -1; // for debug
+   p_parent = nullptr;
 
    p_workers = 1; // master
    p_stop = false;
 }
 
-void Split_Point::init(Split_Point * parent, const Board & bd, int ply, const Local & local) {
+void Split_Point::init(Split_Point * parent, Search_Global & sg, const Local & local) {
 
-   assert(ply > parent->ply());
+   assert(parent != nullptr);
 
    p_parent = parent;
-
-   p_board = bd;
-   p_ply = ply;
+   p_sg = &sg;
 
    p_local = local;
 
@@ -1571,30 +1535,29 @@ void Split_Point::init(Split_Point * parent, const Board & bd, int ply, const Lo
 }
 
 void Split_Point::get_result(Local & local) {
-
    local = p_local;
 }
 
 void Split_Point::enter() {
-
    assert(p_workers != 0);
    p_workers++;
 }
 
 void Split_Point::leave() {
-
    assert(p_workers != 0);
    p_workers--;
 }
 
-move_t Split_Point::get_move(Local & local) {
+Move Split_Point::get_move(Local & local) {
 
-   move_t mv = Move_None;
+   Move mv = move::None;
 
    lock();
 
-   if (!high() && p_local.i < p_local.list.size()) {
+   if (p_local.score < p_local.beta && p_local.i < p_local.list.size()) {
+
       mv = p_local.list.move(p_local.i++);
+
       local.score = p_local.score;
       local.j = p_local.j;
    }
@@ -1604,85 +1567,97 @@ move_t Split_Point::get_move(Local & local) {
    return mv;
 }
 
-void Split_Point::stop_root() {
-
-   p_stop = true;
-}
-
-void Split_Point::put_result(move_t mv, int sc, const Line & pv) {
+void Split_Point::update(Move mv, Score sc, const Line & pv) {
 
    lock();
 
-   if (high()) { // ignore superfluous moves after a fail high
-      unlock();
-      return;
-   }
-
-   p_local.j++;
-   assert(p_local.j <= p_local.i);
-
-   if (sc > p_local.score) {
-
-      p_local.move = mv;
-      p_local.score = sc;
-      p_local.pv.cat(mv, pv);
-
-      if (p_ply == 0) { // root event
-         SG.new_best_move(p_local.move, p_local.score, p_local.depth, p_local.pv);
-      }
-
-      if (sc >= p_local.beta) p_stop = true;
+   if (p_local.score < p_local.beta) { // ignore superfluous moves after a fail high
+      local_update(p_local, mv, sc, pv, *p_sg);
+      if (p_local.score >= p_local.beta) p_stop = true;
    }
 
    unlock();
 }
 
+static void local_update(Local & local, Move mv, Score sc, const Line & pv, Search_Global & sg) { // MOVE ME
+
+   local.j++;
+   assert(local.j <= local.i);
+
+   if (sc > local.score) {
+
+      local.move = mv;
+      local.score = sc;
+      local.pv.concat(mv, pv);
+
+      if (local.ply == 0) { // root event
+         sg.new_best_move(local.move, local.score, local.depth, local.pv);
+      }
+   }
+}
+
+void Split_Point::stop_root() {
+   p_stop = true;
+}
+
 bool Split_Point::is_child(Split_Point * sp) {
 
-   for (Split_Point * s = this; s != NULL; s = s->p_parent) {
+   for (Split_Point * s = this; s != nullptr; s = s->p_parent) {
       if (s == sp) return true;
    }
 
    return false;
 }
 
-void Line::set(move_t mv) {
-
+void Line::set(Move mv) {
    clear();
    add(mv);
 }
 
-void Line::cat(move_t mv, const Line & pv) {
+void Line::concat(Move mv, const Line & pv) {
 
    clear();
    add(mv);
 
    for (int i = 0; i < pv.size(); i++) {
-      add(pv.move(i));
+      add(pv[i]);
    }
 }
 
 std::string Line::to_string(const Pos & pos, int size_max) const {
 
-   std::string s = "";
+   std::string s;
 
    int size = this->size();
    if (size_max != 0 && size > size_max) size = size_max;
 
-   Pos new_pos(pos);
+   Pos new_pos = pos;
 
    for (int i = 0; i < size; i++) {
 
-      move_t mv = move(i);
+      Move mv = move(i);
 
-      if (i != 0) s += " ";
-      s += move_to_string(mv, new_pos);
+      if (s != "") s += " ";
+      s += move::to_string(mv, new_pos);
 
-      new_pos = Pos(new_pos, mv);
+      new_pos = new_pos.succ(mv);
    }
 
    return s;
 }
 
-// end of search.cpp
+std::string Line::to_hub() const {
+
+   std::string s;
+
+   for (int i = 0; i < this->size(); i++) {
+
+      Move mv = move(i);
+
+      if (s != "") s += " ";
+      s += move::to_hub(mv);
+   }
+
+   return s;
+}
 

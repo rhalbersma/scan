@@ -1,6 +1,4 @@
 
-// var.cpp
-
 // includes
 
 #include <cstdlib>
@@ -10,18 +8,20 @@
 #include <string>
 
 #include "libmy.hpp"
-#include "var.h"
+#include "var.hpp"
 
 namespace var {
 
 // variables
 
+Variant_Type Variant;
 bool Book;
+int  Book_Ply;
 int  Book_Margin;
 bool Ponder;
 bool SMP;
 int  SMP_Threads;
-int  Trans_Size;
+int  TT_Size;
 bool BB;
 int  BB_Size;
 bool DXP_Server;
@@ -35,21 +35,28 @@ bool DXP_Search;
 
 static std::map<std::string, std::string> Var;
 
+// prototypes
+
+static bool get_bool (const std::string & name);
+static int  get_int  (const std::string & name);
+
 // functions
 
 void init() {
 
+   set("variant", "normal");
    set("book", "true");
-   set("book-margin", "2");
+   set("book-ply", "4");
+   set("book-margin", "4");
    set("ponder", "false");
    set("threads", "1");
    set("tt-size", "24");
-   set("bb-size", "6");
+   set("bb-size", "5");
    set("dxp-server", "true");
    set("dxp-host", "127.0.0.1");
    set("dxp-port", "27531");
    set("dxp-initiator", "false");
-   set("dxp-time", "5");
+   set("dxp-time", "3");
    set("dxp-moves", "75");
    set("dxp-board", "false");
    set("dxp-search", "false");
@@ -72,6 +79,20 @@ void load(const std::string & file_name) {
       file >> name;
       if (file.eof()) break;
 
+      if (name == "#") { // comment
+
+         std::string comment;
+         std::getline(file, comment);
+
+         if (file.eof()) {
+            std::cerr << "invalid INI file" << std::endl;
+            std::exit(EXIT_FAILURE);
+         }
+
+         file >> name;
+         if (file.eof()) break;
+      }
+
       std::string sep;
       file >> sep;
       if (file.eof() || sep != "=") {
@@ -92,12 +113,27 @@ void load(const std::string & file_name) {
 
 void update() {
 
+   std::string variant = get("variant");
+
+   if (false) {
+   } else if (variant == "normal") {
+      Variant = Normal;
+   } else if (variant == "killer") {
+      Variant = Killer;
+   } else if (variant == "bt") {
+      Variant = BT;
+   } else {
+      std::cerr << "error: variant = \"" << variant << "\"" << std::endl;
+      std::exit(EXIT_FAILURE);
+   }
+
    Book          = get_bool("book");
+   Book_Ply      = get_int("book-ply");
    Book_Margin   = get_int("book-margin");
    Ponder        = get_bool("ponder");
    SMP_Threads   = get_int("threads");
    SMP           = SMP_Threads > 1;
-   Trans_Size    = 1 << get_int("tt-size");
+   TT_Size       = 1 << get_int("tt-size");
    BB_Size       = get_int("bb-size");
    BB            = BB_Size > 0;
    DXP_Server    = get_bool("dxp-server");
@@ -121,11 +157,10 @@ std::string get(const std::string & name) {
 }
 
 void set(const std::string & name, const std::string & value) {
-
    Var[name] = value;
 }
 
-bool get_bool(const std::string & name) {
+static bool get_bool(const std::string & name) {
 
    std::string value = get(name);
 
@@ -140,17 +175,19 @@ bool get_bool(const std::string & name) {
    }
 }
 
-int get_int(const std::string & name) {
-
-   return ml::stoi(get(name));
+static int get_int(const std::string & name) {
+   return std::stoi(get(name));
 }
 
-double get_float(const std::string & name) {
+std::string variant(const std::string & normal, const std::string & killer, const std::string & bt) {
 
-   return ml::stof(get(name));
+   switch (Variant) {
+      case Normal : return normal;
+      case Killer : return killer;
+      case BT     : return bt;
+      default     : return normal;
+   }
 }
 
 }
-
-// end of var.cpp
 

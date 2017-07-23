@@ -1,65 +1,66 @@
 
-// move.cpp
-
 // includes
 
 #include <cctype>
 #include <string>
 
-#include "bit.h"
+#include "bit.hpp"
+#include "common.hpp"
 #include "libmy.hpp"
-#include "list.h"
-#include "move.h"
-#include "move_gen.h"
-#include "pos.h"
-#include "util.h"
+#include "list.hpp"
+#include "move.hpp"
+#include "move_gen.hpp"
+#include "pos.hpp"
+#include "util.hpp"
+
+namespace move {
 
 // prototypes
 
-static bit_t amb (const List & list, int from, int to);
+static Bit amb (const List & list, Square from, Square to);
 
 // functions
 
-move_t move_make(int from, int to, bit_t captured) {
+Move make(Square from, Square to, Bit captured) {
 
-   assert(square_is_ok(from));
-   assert(square_is_ok(to));
-   assert((captured & 07777) == 0); // TODO: stricter #
+   assert(bit::is_incl(captured, bit::Inner));
+   assert(!bit::has(captured, from));
+   assert(!bit::has(captured, to));
 
-   return move_t(uint64(captured) | (uint64(from) << 6) | uint64(to));
+   return Move((uint64(from) << 6) | (uint64(to) << 0) | (uint64(captured) << 5));
 }
 
-bool move_is_promotion(move_t mv, const Pos & pos) {
-
-   return move_is_man(mv, pos) && square_is_promotion(move_to(mv), pos.turn());
+bool is_capture(Move mv, const Pos & /* pos */) {
+   return captured(mv) != 0;
 }
 
-bool move_is_man(move_t mv, const Pos & pos) {
-
-   return bit_test(pos.man(), move_from(mv));
+bool is_promotion(Move mv, const Pos & pos) {
+   return is_man(mv, pos) && square_is_promotion(move::to(mv), pos.turn());
 }
 
-bool move_is_conversion(move_t mv, const Pos & pos) {
-
-   return move_is_man(mv, pos) || move_is_capture(mv, pos);
+bool is_man(Move mv, const Pos & pos) {
+   return bit::has(pos.man(), move::from(mv));
 }
 
-bool move_is_legal(move_t mv, const Pos & pos) {
+bool is_conversion(Move mv, const Pos & pos) {
+   return is_man(mv, pos) || is_capture(mv, pos);
+}
 
+bool is_legal(Move mv, const Pos & pos) {
    List list;
    gen_moves(list, pos);
-   return list_has(list, mv);
+   return list::has(list, mv);
 }
 
-std::string move_to_string(move_t mv, const Pos & pos) {
+std::string to_string(Move mv, const Pos & pos) {
 
-   assert(move_is_legal(mv, pos));
+   assert(is_legal(mv, pos));
 
-   int   from = move_from(mv);
-   int   to   = move_to(mv);
-   bit_t caps = move_captured(mv);
+   Square from = move::from(mv);
+   Square to   = move::to(mv);
+   Bit    caps = captured(mv);
 
-   std::string s = "";
+   std::string s;
 
    s += square_to_string(from);
    s += (caps != 0) ? "x" : "-";
@@ -70,8 +71,8 @@ std::string move_to_string(move_t mv, const Pos & pos) {
       List list;
       gen_captures(list, pos);
 
-      for (bit_t b = caps & ~amb(list, from, to); b != 0; b = bit_rest(b)) {
-         int sq = bit_first(b);
+      for (Bit b = caps & ~amb(list, from, to); b != 0; b = bit::rest(b)) {
+         Square sq = bit::first(b);
          s += "x";
          s += square_to_string(sq);
       }
@@ -80,37 +81,37 @@ std::string move_to_string(move_t mv, const Pos & pos) {
    return s;
 }
 
-static bit_t amb(const List & list, int from, int to) {
+static Bit amb(const List & list, Square from, Square to) {
 
-   bit_t b = ~0;
+   Bit b = bit::Squares;
 
    for (int i = 0; i < list.size(); i++) {
 
-      move_t mv = list.move(i);
+      Move mv = list.move(i);
 
-      if (move_from(mv) == from && move_to(mv) == to) {
-         b &= move_captured(mv);
+      if (move::from(mv) == from && move::to(mv) == to) {
+         b &= captured(mv);
       }
    }
 
-   assert(~b != 0);
+   assert(b != bit::Squares);
    return b;
 }
 
-std::string move_to_hub(move_t mv) {
+std::string to_hub(Move mv) {
 
-   int   from = move_from(mv);
-   int   to   = move_to(mv);
-   bit_t caps = move_captured(mv);
+   Square from = move::from(mv);
+   Square to   = move::to(mv);
+   Bit    caps = captured(mv);
 
-   std::string s = "";
+   std::string s;
 
    s += square_to_string(from);
    s += (caps != 0) ? "x" : "-";
    s += square_to_string(to);
 
-   for (bit_t b = caps; b != 0; b = bit_rest(b)) {
-      int sq = bit_first(b);
+   for (Bit b = caps; b != 0; b = bit::rest(b)) {
+      Square sq = bit::first(b);
       s += "x";
       s += square_to_string(sq);
    }
@@ -118,22 +119,22 @@ std::string move_to_hub(move_t mv) {
    return s;
 }
 
-move_t move_from_string(const std::string & s, const Pos & pos) {
+Move from_string(const std::string & s, const Pos & pos) {
 
    Scanner_Number scan(s);
    std::string token;
 
    token = scan.get_token();
-   int from = square_from_string(token);
+   Square from = square_from_string(token);
 
    token = scan.get_token();
    if (token != "-" && token != "x") throw Bad_Input();
    bool is_cap = token == "x";
 
    token = scan.get_token();
-   int to = square_from_string(token);
+   Square to = square_from_string(token);
 
-   bit_t caps = 0;
+   Bit caps = Bit(0);
 
    while (!scan.eos()) {
 
@@ -141,11 +142,11 @@ move_t move_from_string(const std::string & s, const Pos & pos) {
       if (token != "x") throw Bad_Input();
 
       token = scan.get_token();
-      bit_set(caps, square_from_string(token));
+      bit::set(caps, square_from_string(token));
    }
 
    if (!is_cap && caps == 0) { // quiet move
-      return move_make(from, to);
+      return make(from, to);
    }
 
    // capture => check legality
@@ -153,39 +154,39 @@ move_t move_from_string(const std::string & s, const Pos & pos) {
    List list;
    gen_captures(list, pos);
 
-   move_t move = Move_None;
+   Move move = None;
    int size = 0;
 
    for (int i = 0; i < list.size(); i++) {
 
-      move_t mv = list.move(i);
+      Move mv = list.move(i);
 
-      if (move_from(mv) == from && move_to(mv) == to && bit_incl(caps, move_captured(mv))) {
+      if (move::from(mv) == from && move::to(mv) == to && bit::is_incl(caps, captured(mv))) {
          move = mv;
          size++;
       }
    }
 
-   if (size > 1) return Move_None; // ambiguous move
+   if (size > 1) return None; // ambiguous move
 
    return move;
 }
 
-move_t move_from_hub(const std::string & s) {
+Move from_hub(const std::string & s) {
 
    Scanner_Number scan(s);
    std::string token;
 
    token = scan.get_token();
-   int from = square_from_string(token);
+   Square from = square_from_string(token);
 
    token = scan.get_token();
    if (token != "-" && token != "x") throw Bad_Input();
 
    token = scan.get_token();
-   int to = square_from_string(token);
+   Square to = square_from_string(token);
 
-   bit_t caps = 0;
+   Bit caps = Bit(0);
 
    while (!scan.eos()) {
 
@@ -193,11 +194,11 @@ move_t move_from_hub(const std::string & s) {
       if (token != "x") throw Bad_Input();
 
       token = scan.get_token();
-      bit_set(caps, square_from_string(token));
+      bit::set(caps, square_from_string(token));
    }
 
-   return move_make(from, to, caps);
+   return make(from, to, caps);
 }
 
-// end of move.cpp
+}
 

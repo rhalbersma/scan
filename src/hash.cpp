@@ -1,90 +1,118 @@
 
-// hash.cpp
-
 // includes
 
-#include "board.h"
-#include "hash.h"
+#include "bit.hpp"
+#include "common.hpp"
+#include "hash.hpp"
 #include "libmy.hpp"
+#include "pos.hpp"
+
+namespace hash {
 
 // constants
 
-static const int Random_Size = 50 * 4 + 1;
+const int Table_Bit  { 18 };
+const int Table_Size { 1 << Table_Bit };
+const int Table_Mask { Table_Size - 1 };
 
 // variables
 
-static uint64 Turn_Key;
-static uint64 Piece_Key[Piece_Size][64];
+static Key Key_Turn;
+static Key Key_Piece[Piece_Side_Size][64];
 
-static uint64 Random_64[Random_Size];
+static Key Key_Ranks_123[Table_Size];
+static Key Key_Ranks_456[Table_Size];
+static Key Key_Ranks_789[Table_Size];
+
+static Key Key_Ranks_012[Table_Size];
+static Key Key_Ranks_345[Table_Size];
+static Key Key_Ranks_678[Table_Size];
 
 // prototypes
 
-static uint64 rand_64 ();
+static Key table_key (Piece_Side ps, int index, int offset);
 
 // functions
 
-void hash_init() {
+void init() {
 
-   for (int i = 0; i < Random_Size; i++) {
-      Random_64[i] = rand_64();
+   // hash keys
+
+   Key_Turn = Key(ml::rand_int_64());
+
+   for (int ps = 0; ps < Piece_Side_Size; ps++) {
+      for (int dense = 0; dense < Dense_Size; dense++) {
+         Square sq = square_sparse(dense);
+         Key_Piece[ps][sq] = Key(ml::rand_int_64());
+      }
    }
 
-   Turn_Key = Random_64[0];
+   // men tables
 
-   for (int pc = 0; pc < Piece_Size; pc++) {
-      for (int i = 0; i < 50; i++) {
-         int sq = square_from_50(i);
-         Piece_Key[pc][sq] = Random_64[i * 4 + pc + 1];
-      }
+   for (int index = 0; index < Table_Size; index++) {
+
+      Key_Ranks_123[index] = table_key(White_Man, index,  6);
+      Key_Ranks_456[index] = table_key(White_Man, index, 26);
+      Key_Ranks_789[index] = table_key(White_Man, index, 45);
+
+      Key_Ranks_012[index] = table_key(Black_Man, index,  0);
+      Key_Ranks_345[index] = table_key(Black_Man, index, 19);
+      Key_Ranks_678[index] = table_key(Black_Man, index, 39);
    }
 }
 
-uint64 hash_key(const Board & bd) {
+static Key table_key(Piece_Side ps, int index, int offset) {
 
-   uint64 key = 0;
+   assert(index >= 0 && index < Table_Size);
+   assert(square_is_ok(offset));
 
-   // turn
+   Key key = Key(0);
 
-   if (bd.turn() != White) key ^= turn_key();
+   uint64 group = (uint64(index) << offset) & bit::Squares;
 
-   // pieces
-
-   for (int pc = 0; pc < Piece_Size; pc++) {
-      for (bit_t b = bd.bit(pc); b != 0; b = bit_rest(b)) {
-         int sq = bit_first(b);
-         key ^= piece_key(pc, sq);
-      }
+   for (Bit b = Bit(group); b != 0; b = bit::rest(b)) {
+      Square sq = bit::first(b);
+      key ^= Key_Piece[ps][sq];
    }
 
    return key;
 }
 
-uint64 turn_key() {
+Key key(const Pos & pos) {
 
-   return Random_64[0];
-}
+   Key key = Key(0);
 
-uint64 piece_key(int pc, int sq) {
+   // men
 
-   assert(piece_is_ok(pc));
-   assert(square_is_ok(sq));
+   Bit wm = pos.wm();
+   Bit bm = pos.bm();
 
-   int sq_50 = square_to_50(sq);
+   key ^= Key_Ranks_123[(wm >>  6) & Table_Mask];
+   key ^= Key_Ranks_456[(wm >> 26) & Table_Mask];
+   key ^= Key_Ranks_789[(wm >> 45) & Table_Mask];
 
-   return Random_64[sq_50 * 4 + pc + 1];
-}
+   key ^= Key_Ranks_012[(bm >>  0) & Table_Mask];
+   key ^= Key_Ranks_345[(bm >> 19) & Table_Mask];
+   key ^= Key_Ranks_678[(bm >> 39) & Table_Mask];
 
-static uint64 rand_64() {
+   // kings
 
-   uint64 r = 0;
-
-   for (int i = 0; i < 8; i++) {
-      r = (r << 8) | ml::rand_int(256);
+   for (Bit b = pos.wk(); b != 0; b = bit::rest(b)) {
+      Square sq = bit::first(b);
+      key ^= Key_Piece[White_King][sq];
    }
 
-   return r;
+   for (Bit b = pos.bk(); b != 0; b = bit::rest(b)) {
+      Square sq = bit::first(b);
+      key ^= Key_Piece[Black_King][sq];
+   }
+
+   // turn
+
+   if (pos.turn() != White) key ^= Key_Turn;
+
+   return key;
 }
 
-// end of hash.cpp
+}
 

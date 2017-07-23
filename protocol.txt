@@ -1,0 +1,212 @@
+
+Hub protocol for draughts, version 2 (used by Scan 3.0 and Hub 2.0)
+
+---
+
+Protocol overview.
+
+Hub is a protocol similar to UCI (from chess) and Hub-1 (Scan 2.0), but with a more flexible syntax.  It is text-based (even line-based) and doesn't specify how information is transmitted.  The engine uses standard I/O, so it is up to the GUI (or anything that plays a similar role) to set up the communication.
+
+Shortly after connection between the GUI and the engine, an initialisation phase takes place.  Then, from the engine point of view, a game (or problem solving, or analysis) is merely a sequence of searches.  A search is handled similarly to a remote procedure call (RPC): the GUI sends the parameters in several steps, and the engine starts computing.  The latter outputs intermediate information (anytime algorithm), until a final answer is produced due to depth/time constraint or interruption by the GUI.
+
+Note: Scan needs to be launched in Hub mode using a "hub" command-line argument.  On Unix systems, that would be "./scan hub".  As the protocol uses text, you can experiment manually.
+
+---
+
+general syntax
+
+All lines (both from and to the engine) have the form:
+<command> <arg>=<val> <arg>=<val> ...
+possibly with 0 arguments.  Values can be quoted with double quotes.  It is in fact required if they contain a special character (such as a space or '=') or are empty.
+
+Some arguments act as a flag and don't have a value; the "=val" part is then omitted.  You can consider that the value is the empty string.
+
+Both the engine and the GUI should ignore commands and arguments that they don't understand.  This allows extending the protocol later without breaking existing software.  This is the main reason for the somewhat verbose syntax.
+
+---
+
+The initialisation phase looks like this:
+
+hub
+    id name=Scan version=3.0 author="Fabien Letouzey" country=France
+    param name=variant value=normal type=enum values="normal killer bt"
+    param name=book value=true type=bool
+    ...
+    wait
+set-param name=variant value=killer
+set-param name=book value=false
+...
+init
+    (the engine should initialise its data structures, now that is has the values)
+    (it might display some information here, that the GUI should ignore)
+    ready
+
+The engine answers are indented for illustrative purposes only; additional spaces have no special meaning in the protocol.
+
+Engine-parameter declaration is similar to UCI.  The allowed types are:
+- type=bool
+- type=int min=... max=...
+- type=real min=... max=...
+- type=string
+- type=enum values="... ... ..."
+
+Note: The Hub GUI doesn't care about the type; instead it handles all engine parameters as strings.  It is recommended to indicate parameter type anyway in case more advanced software is developed in the future.
+
+Note: the GUI will set the engine's parameters before asking for "init".  They might affect long operations like initialisation/loading of complex data structures.  The Hub GUI never sets the parameters after initialisation.
+
+Note: Hub will set parameters only if the user-selected value is different from the current value declared by the engine.
+
+---
+
+A search is launched in 3 steps:
+1) position
+2) time/depth limit
+3) search mode, which actually launches the search
+
+example:
+pos pos=Wbbbbbbbbbbbbbbbbbbbbeeeeeeeeeewwwwwwwwwwwwwwwwwwww
+level move-time=1
+go think
+
+Example with a few moves (for repetition detection):
+pos pos=BeeeWWeeeeeeeeeeeeeeeeeeeweeeeeeeeewweBeeeeeeeeeBee moves="38-15 5-41 48-26"
+level moves=9 time=291.587
+go ponder
+
+
+1) position
+
+syntax:
+pos pos=<position> [moves=<moves>]
+
+The position format is one character for the side to move ('W' or 'B') + one character per square in standard order, so 51 in total.  For each square:
+'w': white man
+'b': black man
+'W': white king
+'B': black king
+'e': empty
+
+The move format is the same as standard notation for quiet moves, for example "32-28".  For captures, all the captured pieces (but not the pivots) are included in any order like this: from x to x captured x captured ... without any spaces.  For example "28x19x23".
+
+Note: Sending moves is necessary to allow the engine to detect draw by repetition during search.  Hub only sends king moves, as they are usually reversible.
+
+
+2) time/depth limit
+
+"level" can have one of the following forms:
+level depth=<max depth> (optional)
+level move-time=<time per move> (optional)
+level [moves=<remaining moves>] time=<remaining time> [inc=<increment per move>]
+level infinite (for analysis, the GUI will send "stop" later)
+
+Time is measured in seconds (real number).  The various fields are the same as in UCI.  For complex time management (moves/time/inc), the meaningful combinations are:
+- time only (sudden death)
+- moves + time (x/y time control)
+- time + inc (x+y aka. Fischer time control)
+
+Note: the increment is added before every move.  While not critical, this is mathematically cleaner.
+
+
+3) search mode
+
+A search is launched with "go" and one of 3 arguments: "think", "ponder", or "analyze".
+
+"go think" is the normal, engine is thinking, search.  The GUI wants the engine to eventually produce a move to play.
+
+"go ponder" works like in UCI: the expected opponent move, chosen by the engine during the previous search, is already present in the position.  The engine's game clock is not running at this point, so it can wait for "ponder-hit" (or a new "go think" search) before measuring time.
+
+With "go analyze", the GUI cares more about search information such as the score and PV.  The engine can assume that it is not playing a game, and is allowed to behave differently.  For example not using the opening book, spending time searching a single legal move, or not trying to avoid draws.
+
+Note: the GUI will never ask the engine to search a terminal position, even for pondering.  So the engine can assume that there is at least one legal move.
+
+Note: contrary to UCI, the engine is allowed to stop searching at any time and produce a result, even in ponder and analysis modes (infinite searches).  The GUI will do the buffering if necessary.
+
+
+4) the engine is searching
+
+The engine will (optionally) answer with progressive search information and then, eventually, its move:
+    info ...
+    info depth=21 mean-depth=20.8 score=-0.01 nodes=31261613 time=3.906 nps=8.0 pv="32-28 17-22 28x17x22 12x21x17 33-28 7-12 39-33 19-23 28x19x23 14x23x19 44-39 9-14 50-44 4-9 34-29 23x34x29 39x30x34 21-26 44-39 11-17 31-27 6-11 37-31 26x37x31 41x32x37 20-24 30x19x24 13x24x19"
+    done move=32-28 ponder=17-22
+
+Scan's "info" contains:
+- depth
+- average leaf depth (real number)
+- score in "men" (real number)
+- number of nodes (64-bit integer)
+- time in seconds (real number)
+- speed in MNPS (real number)
+- PV (in double quotes because moves are separated by spaces)
+Other engines can use any subset, or even add their own fields (but with no guarantee that a third-party GUI will display them).
+
+"done" contains:
+- the engine’s move
+- optionally, the expected answer from the opponent (used for pondering but safe to output regardless)
+
+The GUI can interrupt the search at any time with "stop" (if the opponent has just played an unexpected move or the user is asking for a different operation).  The engine is not expected to react instantly, but must still produce a "done" answer.
+
+The GUI will send "ponder-hit" during a "go ponder" search if the opponent has played the expected move.  Otherwise it will send "stop" and immediately set up a new search.
+
+Note: the GUI can also send "ping" during search.  The engine should answer "pong" and keep searching.
+
+The only commands that the engine can receive during search are:
+- ping
+- ponder-hit
+- stop
+
+---
+
+Additional commands that the GUI can send:
+- new-game: indicates that the next search will be unrelated to previous ones (=> clear TT)
+- ping: must be answered by "pong"
+- quit
+
+Additional answers that the engine can send:
+- error message="..."
+
+Note: if the standard input is closed, the engine should assume that the GUI has crashed and, therefore, quit as directly as possible.
+
+---
+
+Command summary.
+
+GUI commands to the engine:
+- initialisation
+  * hub
+  * set-param name=... value=...
+  * init
+- position
+  * pos pos=... [moves="..."]
+- time/depth limit
+  * level depth=...
+  * level move-time=...
+  * level [moves=...] time=... [inc=...]
+  * level infinite
+- search
+  * go think
+  * go ponder
+  * go analyze
+  * ponder-hit (can occur during search)
+  * stop (can occur during search)
+- misc.
+  * new-game (clear TT)
+  * ping (can occur during search)
+  * quit
+
+engine answers to the GUI:
+- init
+  * id name=... version=... author="..." country=...
+  * param name=... value=... type=... (+ type constraints)
+  * wait
+  * ready
+- search
+  * info ...
+  * done move=... [ponder=...]
+- misc.
+  * pong
+  * error message="..."
+
+That is all for now, today is 2017-07-11.
+
+Fabien Letouzey (fabien_letouzey@hotmail.com).
+

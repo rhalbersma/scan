@@ -1,221 +1,384 @@
 
-// pos.cpp
-
 // includes
 
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <string>
 
-#include "bit.h"
-#include "board.h"
-#include "fen.h"
+#include "bb_base.hpp"
+#include "bit.hpp"
+#include "common.hpp"
+#include "fen.hpp"
 #include "libmy.hpp"
-#include "move.h"
-#include "move_gen.h"
-#include "pos.h"
-#include "util.h"
-#include "var.h"
-
-// "constants"
-
-const int Square_From_50[50] = {
-      6,  7,  8,  9, 10,
-   11, 12, 13, 14, 15,
-     17, 18, 19, 20, 21,
-   22, 23, 24, 25, 26,
-     28, 29, 30, 31, 32,
-   33, 34, 35, 36, 37,
-     39, 40, 41, 42, 43,
-   44, 45, 46, 47, 48,
-     50, 51, 52, 53, 54,
-   55, 56, 57, 58, 59,
-};
-
-const int Square_To_50[Square_Size] = {
-   -1, -1, -1, -1, -1, -1,
-      0,  1,  2,  3,  4,
-    5,  6,  7,  8,  9, -1,
-     10, 11, 12, 13, 14,
-   15, 16, 17, 18, 19, -1,
-     20, 21, 22, 23, 24,
-   25, 26, 27, 28, 29, -1,
-     30, 31, 32, 33, 34,
-   35, 36, 37, 38, 39, -1,
-     40, 41, 42, 43, 44,
-   45, 46, 47, 48, 49, -1,
-     -1, -1, -1, -1, -1,
-};
-
-const int Square_File[Square_Size] = {
-   -1, -1, -1, -1, -1, -1,
-      1,  3,  5,  7,  9,
-    0,  2,  4,  6,  8, -1,
-      1,  3,  5,  7,  9,
-    0,  2,  4,  6,  8, -1,
-      1,  3,  5,  7,  9,
-    0,  2,  4,  6,  8, -1,
-      1,  3,  5,  7,  9,
-    0,  2,  4,  6,  8, -1,
-      1,  3,  5,  7,  9,
-    0,  2,  4,  6,  8, -1,
-     -1, -1, -1, -1, -1,
-};
-
-const int Square_Rank[Square_Size] = {
-   -1, -1, -1, -1, -1, -1,
-      0,  0,  0,  0,  0,
-    1,  1,  1,  1,  1, -1,
-      2,  2,  2,  2,  2,
-    3,  3,  3,  3,  3, -1,
-      4,  4,  4,  4,  4,
-    5,  5,  5,  5,  5, -1,
-      6,  6,  6,  6,  6,
-    7,  7,  7,  7,  7, -1,
-      8,  8,  8,  8,  8,
-    9,  9,  9,  9,  9, -1,
-     -1, -1, -1, -1, -1,
-};
-
-const int Inc[Dir_Size] = {
-   NW_Inc, NE_Inc, SW_Inc, SE_Inc,
-};
+#include "move.hpp"
+#include "move_gen.hpp"
+#include "pos.hpp"
+#include "var.hpp"
 
 // functions
 
-std::string square_to_string(int sq) {
+Pos::Pos(Side turn, Bit wm, Bit bm, Bit wk, Bit bk)
+: Pos(wm | bm, wk | bk, wm | wk, bm | bk, wm | bm | wk | bk, turn)
+{
+   assert(bit::count(wm | bm | wk | bk) == bit::count(wm) + bit::count(bm) + bit::count(wk) + bit::count(bk)); // all disjoint?
 
-   return ml::itos(square_to_50(sq) + 1);
+   assert(bit::is_incl(wm, bit::WM_Squares));
+   assert(bit::is_incl(bm, bit::BM_Squares));
 }
 
-bool string_is_square(const std::string & s) {
+Pos::Pos(Bit man, Bit king, Bit white, Bit black, Bit all, Side turn) {
 
-   if (!string_is_nat(s)) return false;
+   assert((man ^ king) == all);
+   assert((white ^ black) == all);
 
-   int sq = ml::stoi(s);
-   return sq >= 1 && sq <= 50;
-}
+   assert(bit::is_incl(man & white, bit::WM_Squares));
+   assert(bit::is_incl(man & black, bit::BM_Squares));
 
-int square_from_string(const std::string & s) {
+   Bit side[Side_Size] { white, black };
+   assert(side[side_opp(turn)] != 0);
+   if (var::Variant == var::BT) assert((side[turn] & king) == 0);
 
-   if (!string_is_nat(s)) throw Bad_Input();
-   return square_from_int(ml::stoi(s));
-}
+   assert(bit::count(white) <= 20);
+   assert(bit::count(black) <= 20);
 
-int square_from_int(int sq) {
-
-   if (sq < 1 || sq > 50) throw Bad_Input();
-   return square_from_50(sq - 1);
-}
-
-void Pos::copy(const Pos & pos) {
-
-   init(pos.p_turn, pos.p_piece[White], pos.p_piece[Black], pos.p_king);
-}
-
-void Pos::init() {
-
-   pos_from_fen(*this, Start_FEN);
-}
-
-void Pos::init(int turn, bit_t wp, bit_t bp, bit_t k) {
-
-   assert((wp & bp) == 0);
-   assert(bit_incl(k, wp | bp));
-
+   p_piece[Man]  = man;
+   p_piece[King] = king;
+   p_side[White] = white;
+   p_side[Black] = black;
+   p_all = all;
    p_turn = turn;
-   p_piece[White] = wp;
-   p_piece[Black] = bp;
-   p_king = k;
 }
 
-void Pos::from_bit(int turn, bit_t wm, bit_t bm, bit_t wk, bit_t bk) {
+Pos Pos::succ(Move mv) const {
 
-   init(turn, wm | wk, bm | bk, wk | bk);
+   Square from = move::from(mv);
+   Square to   = move::to(mv);
+   Bit    caps = move::captured(mv);
+
+   Side atk = p_turn;
+   Side def = side_opp(atk);
+
+   assert(is_side(from, atk));
+   assert(from == to || is_empty(to));
+   assert(bit::is_incl(caps, side(def)));
+
+   Bit piece[Piece_Size] { p_piece[Man],  p_piece[King] };
+   Bit side[Side_Size]   { p_side[White], p_side[Black] };
+   Bit all = this->all();
+
+   Bit delta = bit::bit(from) ^ bit::bit(to);
+
+   side[atk] ^= delta;
+   all ^= delta;
+
+   if (is_piece(from, King)) { // king move
+      piece[King] ^= delta;
+   } else if (square_is_promotion(to, atk)) { // promotion
+      bit::clear(piece[Man], from);
+      bit::set(piece[King], to);
+   } else { // man move
+      piece[Man] ^= delta;
+   }
+
+   piece[Man]  &= ~caps;
+   piece[King] &= ~caps;
+   side[def]   &= ~caps;
+   all         &= ~caps;
+
+   return Pos(piece[Man], piece[King], side[White], side[Black], all, def);
 }
 
-extern void pos_rev(Pos & dst, const Pos & src) {
-
-   dst.init(side_opp(src.turn()), bit_rev(src.piece(Black)), bit_rev(src.piece(White)), bit_rev(src.king()));
+Node::Node(const Pos & pos) : Node(pos, 0, nullptr) {
 }
 
-void pos_do_move(Pos & dst, const Pos & src, move_t mv) {
+Node::Node(const Pos & pos, int ply, const Node * parent) {
+   p_pos = pos;
+   p_ply = ply;
+   p_parent = parent;
+}
 
-   int from = move_from(mv);
-   int to = move_to(mv);
-   bit_t captured = move_captured(mv);
+Node Node::succ(Move mv) const {
 
-   int atk = src.turn();
-   int def = side_opp(atk);
+   Pos new_pos = p_pos.succ(mv);
 
-   assert(bit_test(src.piece(atk), from));
-   assert(from == to || bit_test(src.empty(), to));
-   assert(bit_incl(captured, src.piece(def)));
+   if (move::is_conversion(mv, p_pos)) {
+      return Node(new_pos);
+   } else {
+      return Node(new_pos, p_ply + 1, this);
+   }
+}
 
-   bit_t piece[Side_Size] = { src.piece(White), src.piece(Black) };
-   bit_t king = src.king();
+bool Node::is_end() const {
+   return pos::is_loss(p_pos) || is_draw(3);
+}
 
-   bit_clear(piece[atk], from);
-   bit_set(piece[atk], to);
+bool Node::is_draw(int rep) const {
 
-   if (bit_test(src.man(), from)) { // man move
+   if (p_ply < 4) return false;
 
-      if (square_is_promotion(to, atk)) {
-         bit_set(king, to);
+   const Node * node = this;
+
+   int n = 1;
+
+   for (int i = 0; i < p_ply / 2; i++) {
+
+      node = node->p_parent;
+      assert(node != nullptr);
+
+      node = node->p_parent;
+      assert(node != nullptr);
+
+      assert(node->p_pos.turn() == p_pos.turn());
+
+      if (node->p_pos.wk() == p_pos.wk()
+       && node->p_pos.bk() == p_pos.bk()) {
+         n++;
+         if (n == rep) return true;
+      }
+   }
+
+   return false;
+}
+
+namespace pos { // ###
+
+// types
+
+typedef int fun_t(Piece_Side ps, Square sq);
+
+// constants
+
+const int Table_Bit  { 18 };
+const int Table_Size { 1 << Table_Bit };
+const int Table_Mask { Table_Size - 1 };
+
+// variables
+
+Pos Start;
+
+static int Tempo_Ranks_123[Table_Size];
+static int Tempo_Ranks_456[Table_Size];
+static int Tempo_Ranks_789[Table_Size];
+
+static int Tempo_Ranks_012[Table_Size];
+static int Tempo_Ranks_345[Table_Size];
+static int Tempo_Ranks_678[Table_Size];
+
+static int Skew_Ranks_123[Table_Size];
+static int Skew_Ranks_456[Table_Size];
+static int Skew_Ranks_789[Table_Size];
+
+static int Skew_Ranks_012[Table_Size];
+static int Skew_Ranks_345[Table_Size];
+static int Skew_Ranks_678[Table_Size];
+
+// prototypes
+
+static int table_val (fun_t f, Piece_Side ps, int index, int offset);
+
+static int tempo (Piece_Side ps, Square sq);
+static int skew  (Piece_Side ps, Square sq);
+
+// functions
+
+void init() {
+
+   // starting position
+
+   Start = pos_from_fen(Start_FEN);
+
+   // men tables
+
+   for (int index = 0; index < Table_Size; index++) {
+
+      Tempo_Ranks_123[index] = table_val(tempo, White_Man, index,  6);
+      Tempo_Ranks_456[index] = table_val(tempo, White_Man, index, 26);
+      Tempo_Ranks_789[index] = table_val(tempo, White_Man, index, 45);
+
+      Tempo_Ranks_012[index] = table_val(tempo, Black_Man, index,  0);
+      Tempo_Ranks_345[index] = table_val(tempo, Black_Man, index, 19);
+      Tempo_Ranks_678[index] = table_val(tempo, Black_Man, index, 39);
+
+      Skew_Ranks_123[index]  = table_val(skew,  White_Man, index,  6);
+      Skew_Ranks_456[index]  = table_val(skew,  White_Man, index, 26);
+      Skew_Ranks_789[index]  = table_val(skew,  White_Man, index, 45);
+
+      Skew_Ranks_012[index]  = table_val(skew,  Black_Man, index,  0);
+      Skew_Ranks_345[index]  = table_val(skew,  Black_Man, index, 19);
+      Skew_Ranks_678[index]  = table_val(skew,  Black_Man, index, 39);
+   }
+}
+
+bool is_loss(const Pos & pos) {
+   return !can_move(pos, pos.turn())
+       || (var::Variant == var::BT && has_king(pos, side_opp(pos.turn())));
+}
+
+bool is_wipe(const Pos & pos) { // fast subset of "is_loss"
+   return pos.side(pos.turn()) == 0
+       || (var::Variant == var::BT && has_king(pos, side_opp(pos.turn())));
+}
+
+Piece_Side piece_side(const Pos & pos, Square sq) {
+
+   int ps = (bit::bit(pos.empty(), sq) << 2)
+          | (bit::bit(pos.king(),  sq) << 1)
+          | (bit::bit(pos.black(), sq) << 0);
+
+   return Piece_Side(ps); // can be Empty
+}
+
+double phase(const Pos & pos) {
+
+   double phase = double(stage(pos)) / double(Stage_Size);
+
+   assert(phase >= 0.0 && phase <= 1.0);
+   return phase;
+}
+
+int stage(const Pos & pos) {
+
+   int stage = 300 - tempo(pos);
+
+   assert(stage >= 0 && stage <= Stage_Size);
+   return stage;
+}
+
+int tempo(const Pos & pos) {
+
+   int tempo = 0;
+
+   tempo += Tempo_Ranks_123[(pos.wm() >>  6) & Table_Mask];
+   tempo += Tempo_Ranks_456[(pos.wm() >> 26) & Table_Mask];
+   tempo += Tempo_Ranks_789[(pos.wm() >> 45) & Table_Mask];
+
+   tempo += Tempo_Ranks_012[(pos.bm() >>  0) & Table_Mask];
+   tempo += Tempo_Ranks_345[(pos.bm() >> 19) & Table_Mask];
+   tempo += Tempo_Ranks_678[(pos.bm() >> 39) & Table_Mask];
+
+   return tempo;
+}
+
+int skew(const Pos & pos, Side sd) {
+
+   int skew = 0;
+
+   if (sd == White) {
+      skew += Skew_Ranks_123[(pos.wm() >>  6) & Table_Mask];
+      skew += Skew_Ranks_456[(pos.wm() >> 26) & Table_Mask];
+      skew += Skew_Ranks_789[(pos.wm() >> 45) & Table_Mask];
+   } else {
+      skew += Skew_Ranks_012[(pos.bm() >>  0) & Table_Mask];
+      skew += Skew_Ranks_345[(pos.bm() >> 19) & Table_Mask];
+      skew += Skew_Ranks_678[(pos.bm() >> 39) & Table_Mask];
+   }
+
+   return skew;
+}
+
+static int tempo(Piece_Side ps, Square sq) {
+
+   switch (piece_side_piece(ps)) {
+      case Man  : return (Line_Size - 1) - square_rank(sq, piece_side_side(ps));
+      case King : return 0;
+      default   : return 0;
+   }
+}
+
+static int skew(Piece_Side ps, Square sq) {
+
+   switch (piece_side_piece(ps)) {
+      case Man  : return square_file(sq) * 2 - (Line_Size - 1);
+      case King : return 0;
+      default   : return 0;
+   }
+}
+
+static int table_val(fun_t f, Piece_Side ps, int index, int offset) {
+
+   assert(index >= 0 && index < Table_Size);
+   assert(square_is_ok(offset));
+
+   int val = 0;
+
+   uint64 group = (uint64(index) << offset) & bit::Squares;
+
+   for (Bit b = Bit(group); b != 0; b = bit::rest(b)) {
+      Square sq = bit::first(b);
+      val += f(ps, sq);
+   }
+
+   return val;
+}
+
+void disp(const Pos & pos) {
+
+   // pieces
+
+   for (int rk = 0; rk < Line_Size; rk++) {
+
+      for (int fl = 0; fl < Line_Size; fl++) {
+
+         if (square_is_light(fl, rk)) {
+
+            std::printf("  ");
+
+         } else {
+
+            Square sq = square_make(fl, rk);
+
+            switch (piece_side(pos, sq)) {
+               case White_Man :  std::printf("O "); break;
+               case Black_Man :  std::printf("* "); break;
+               case White_King : std::printf("@ "); break;
+               case Black_King : std::printf("# "); break;
+               case Empty :      std::printf("- "); break;
+               default :         std::printf("? "); break;
+            }
+         }
       }
 
-   } else { // king move
+      std::printf("  ");
 
-      assert(bit_test(king, from));
+      for (int fl = 0; fl < Line_Size; fl++) {
 
-      bit_clear(king, from);
-      bit_set(king, to);
+         if (square_is_light(fl, rk)) {
+            std::printf("  ");
+         } else {
+            Square sq = square_make(fl, rk);
+            std::printf("%02d", square_to_std(sq));
+         }
+      }
+
+      std::printf("\n");
    }
 
-   piece[def] &= ~captured;
-   king       &= ~captured;
+   std::printf("\n");
+   std::fflush(stdout);
 
-   dst.init(def, piece[White], piece[Black], king);
-}
+   // turn
 
-bool pos_is_capture(const Pos & pos) {
+   Side atk = pos.turn();
+   Side def = side_opp(atk);
 
-   return can_capture(pos, pos.turn());
-}
+   if (is_loss(pos)) {
 
-int pos_size(const Pos & pos) {
+      std::cout << side_to_string(def) << " wins #";
 
-   int nw = bit_count(pos.piece(White));
-   int nb = bit_count(pos.piece(Black));
-
-   return nw + nb;
-}
-
-bool pos_has_king(const Pos & pos) {
-
-   return pos.king() != 0;
-}
-
-int pos_square(const Pos & pos, int sq) {
-
-   assert(square_is_ok(sq));
-
-   if (false) {
-   } else if (bit_test(pos.empty(), sq)) {
-      return Empty;
-   } else if (bit_test(pos.wm(), sq)) {
-      return WM;
-   } else if (bit_test(pos.bm(), sq)) {
-      return BM;
-   } else if (bit_test(pos.wk(), sq)) {
-      return WK;
-   } else if (bit_test(pos.bk(), sq)) {
-      return BK;
    } else {
-      assert(false);
-      return Frame;
+
+      std::cout << side_to_string(atk) << " to play";
+
+      if (bb::pos_is_load(pos)) {
+         bb::Value val = bb::probe(pos);
+         std::cout << ", endgame " << bb::value_to_string(val);
+      }
    }
+
+   std::cout << std::endl;
+   std::cout << std::endl;
 }
 
-// end of pos.cpp
+}
 

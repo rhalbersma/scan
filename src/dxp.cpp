@@ -1,6 +1,4 @@
 
-// dxp.cpp
-
 // includes
 
 #include <cstdio>
@@ -8,29 +6,35 @@
 #include <iostream>
 #include <string>
 
-#include "bit.h"
-#include "board.h"
-#include "dxp.h"
-#include "fen.h"
-#include "game.h"
+#include "bit.hpp"
+#include "common.hpp"
+#include "dxp.hpp"
+#include "fen.hpp"
+#include "game.hpp"
 #include "libmy.hpp"
-#include "move.h"
-#include "pos.h"
-#include "search.h"
-#include "socket.h"
-#include "util.h" // for Bad_Input and Bad_Output
-#include "var.h"
+#include "move.hpp"
+#include "pos.hpp"
+#include "score.hpp"
+#include "search.hpp"
+#include "socket.hpp"
+#include "util.hpp" // for Bad_Input and Bad_Output
+#include "var.hpp"
+
+namespace dxp {
 
 // constants
 
-static const std::string Engine_Name = "Scan 2.0";
-
-static const bool BB_Adj = false;
-static const bool Disp_DXP = false;
-
-static const int Result_Unknown = -2;
+const bool BB_Adj   { false };
+const bool Disp_DXP { false };
 
 // types
+
+enum Result {
+   Unknown = -2,
+   Loss    = -1,
+   Draw    =  0,
+   Win     = +1,
+};
 
 struct Game_Req { // 'R'
    int version;
@@ -48,7 +52,7 @@ struct Game_Acc { // 'A'
    char acceptance_code;
 };
 
-struct Move { // 'M'
+struct Move_ { // 'M'
    double time;
    int from_field;
    int to_field;
@@ -77,14 +81,14 @@ struct Back_Acc { // 'K'
 struct Message { // avoid "union" because of std::string constructor
    Game_Req game_req;
    Game_Acc game_acc;
-   Move move;
+   Move_ move;
    Game_End game_end;
    Chat chat;
    Back_Req back_req;
    Back_Acc back_acc;
 };
 
-class Scanner_DXP {
+class Scanner {
 
 private :
 
@@ -93,7 +97,7 @@ private :
 
 public :
 
-   Scanner_DXP (const std::string & string);
+   explicit Scanner (const std::string & s);
 
    std::string get_field ();
    std::string get_field (int size);
@@ -105,15 +109,16 @@ public :
 // variables
 
 static std::string Opp_Name;
-static int My_Side;
+static Side My_Side;
 static double Time;
 static int Moves;
 static Pos Start_Pos;
+static double Last_Score;
 
 static bool Playing;
 static Game G_Game;
 static int Games;
-static int Score;
+static int Total;
 
 // prototypes
 
@@ -121,7 +126,7 @@ static void handle_string (const std::string & s);
 
 static void handle_game_req (const Game_Req & game_req);
 static void handle_game_acc (const Game_Acc & game_acc);
-static void handle_move     (const Move & move);
+static void handle_move     (const Move_ & move);
 static void handle_game_end (const Game_End & game_end);
 static void handle_chat     (const Chat & chat);
 static void handle_back_req (const Back_Req & back_req);
@@ -132,15 +137,15 @@ static void next_game  ();
 static void start_game ();
 static void end_game   (int result);
 static void go_to      (int ply);
-static void play_move  (move_t mv, double time);
+static void play_move  (Move mv, double time);
 static void update     ();
+static void error      (const std::string & msg);
 
-static void put_game_req (int sd, double time, int moves, const Pos & pos);
+static void put_game_req (Side sd, double time, int moves, const Pos & pos);
 static void put_game_acc (char acceptance_code);
-static void put_move     (move_t mv, double time);
+static void put_move     (Move mv, double time);
 static void put_game_end (int result, char stop_code);
 static void put_chat     (const std::string & s);
-static void put_back_req (int ply, int carry);
 static void put_back_acc (char acceptance_code);
 
 static std::string encode_message (char header, const Message & msg);
@@ -148,34 +153,38 @@ static void        decode_message (char & header, Message & msg, const std::stri
 
 static std::string encode_game_req (const Game_Req & game_req);
 static std::string encode_game_acc (const Game_Acc & game_acc);
-static std::string encode_move     (const Move & move);
+static std::string encode_move     (const Move_ & move);
 static std::string encode_game_end (const Game_End & game_end);
 static std::string encode_chat     (const Chat & chat);
 static std::string encode_back_req (const Back_Req & back_req);
 static std::string encode_back_acc (const Back_Acc & back_acc);
 
-static void decode_game_req (Game_Req & game_req, Scanner_DXP & scan);
-static void decode_game_acc (Game_Acc & game_acc, Scanner_DXP & scan);
-static void decode_move     (Move & move,         Scanner_DXP & scan);
-static void decode_game_end (Game_End & game_end, Scanner_DXP & scan);
-static void decode_chat     (Chat & chat,         Scanner_DXP & scan);
-static void decode_back_req (Back_Req & back_req, Scanner_DXP & scan);
-static void decode_back_acc (Back_Acc & back_acc, Scanner_DXP & scan);
+static void decode_game_req (Game_Req & game_req, Scanner & scan);
+static void decode_game_acc (Game_Acc & game_acc, Scanner & scan);
+static void decode_move     (Move_ & move,        Scanner & scan);
+static void decode_game_end (Game_End & game_end, Scanner & scan);
+static void decode_chat     (Chat & chat,         Scanner & scan);
+static void decode_back_req (Back_Req & back_req, Scanner & scan);
+static void decode_back_acc (Back_Acc & back_acc, Scanner & scan);
+
+static std::string score_to_string (double sc);
 
 static std::string encode_int    (int n, int size);
 static std::string encode_string (const std::string & s, int size);
 
-static int         decode_int    (Scanner_DXP & scan, int size);
-static std::string decode_string (Scanner_DXP & scan, int size);
+static Side        decode_side   (char c);
+static int         decode_int    (Scanner & scan, int size);
+static double      decode_real   (Scanner & scan, int size);
+static std::string decode_string (Scanner & scan, int size);
 
 static std::string get_string ();
 static void        put_string (const std::string & s);
 
 // functions
 
-void dxp_loop() {
+void loop() {
 
-   socket_init();
+   socket_::init();
 
    Opp_Name = "Opponent";
    Time = double(var::DXP_Time) * 60.0;
@@ -183,7 +192,7 @@ void dxp_loop() {
 
    Playing = false;
    Games = 0;
-   Score = 0;
+   Total = 0;
 
    if (var::DXP_Initiator) first_game();
 
@@ -201,18 +210,20 @@ static void handle_string(const std::string & s) {
    decode_message(header, msg, s);
 
    switch (header) {
-   case 'R' : handle_game_req(msg.game_req); break;
-   case 'A' : handle_game_acc(msg.game_acc); break;
-   case 'M' : handle_move(msg.move);         break;
-   case 'E' : handle_game_end(msg.game_end); break;
-   case 'C' : handle_chat(msg.chat);         break;
-   case 'B' : handle_back_req(msg.back_req); break;
-   case 'K' : handle_back_acc(msg.back_acc); break;
-   default  : throw Bad_Input();             break;
+      case 'R' : handle_game_req(msg.game_req); break;
+      case 'A' : handle_game_acc(msg.game_acc); break;
+      case 'M' : handle_move(msg.move);         break;
+      case 'E' : handle_game_end(msg.game_end); break;
+      case 'C' : handle_chat(msg.chat);         break;
+      case 'B' : handle_back_req(msg.back_req); break;
+      case 'K' : handle_back_acc(msg.back_acc); break;
+      default  : throw Bad_Input();             break;
    }
 }
 
 static void handle_game_req(const Game_Req & game_req) {
+
+   if (Playing) error("game in progress");
 
    if (game_req.version > 1) {
       put_game_acc('1');
@@ -220,16 +231,26 @@ static void handle_game_req(const Game_Req & game_req) {
    }
 
    Opp_Name = game_req.initiator_name;
-   My_Side = (game_req.follower_color == 'W') ? White : Black;
+   My_Side = decode_side(game_req.follower_color);
    Time = game_req.thinking_time * 60.0;
    Moves = game_req.number_of_moves;
 
    if (game_req.starting_position == 'A') {
-      Start_Pos.init();
+
+      Start_Pos = pos::Start;
+
    } else if (game_req.starting_position == 'B') {
+
       std::string dxp = game_req.color_to_move_first + game_req.position;
-      pos_from_dxp(Start_Pos, dxp);
+
+      try {
+         Start_Pos = pos_from_dxp(dxp);
+      } catch (const Bad_Input &) {
+         error("illegal position: \"" + dxp + "\"");
+      }
+
    } else {
+
       throw Bad_Input();
    }
 
@@ -240,7 +261,7 @@ static void handle_game_req(const Game_Req & game_req) {
 
 static void handle_game_acc(const Game_Acc & game_acc) {
 
-   assert(!Playing);
+   if (Playing) error("game in progress");
 
    if (game_acc.acceptance_code == '0') {
       Opp_Name = game_acc.follower_name;
@@ -248,30 +269,35 @@ static void handle_game_acc(const Game_Acc & game_acc) {
    }
 }
 
-static void handle_move(const Move & move) {
+static void handle_move(const Move_ & move) {
+
+   if (!Playing) error("no game in progress");
 
    double time = move.time;
 
-   int from = square_from_50(move.from_field - 1);
-   int to = square_from_50(move.to_field - 1);
+   Square from = square_from_std(move.from_field);
+   Square to   = square_from_std(move.to_field);
 
-   bit_t caps = 0;
+   Bit caps = Bit(0);
 
    for (int i = 0; i < move.number_captured; i++) {
-      bit_set(caps, square_from_50(move.captured_pieces[i] - 1));
+      bit::set(caps, square_from_std(move.captured_pieces[i]));
    }
 
-   move_t mv = move_make(from, to, caps);
+   Move mv = move::make(from, to, caps);
 
-   const Board & bd = G_Game.board();
+   if (!move::is_legal(mv, G_Game.pos())) {
+      pos::disp(G_Game.pos());
+      error("illegal move: \"" + move::to_hub(mv) + "\"");
+   }
 
-   std::string move_string = move_to_string(mv, bd);
+   std::string move_string = move::to_string(mv, G_Game.pos());
 
    play_move(mv, time);
 
    if (var::DXP_Board) {
 
-      board_disp(bd);
+      pos::disp(G_Game.pos());
 
       std::cout << Opp_Name << " plays " << move_string << std::endl;
       std::cout << std::endl;
@@ -283,27 +309,27 @@ static void handle_move(const Move & move) {
 static void handle_game_end(const Game_End & game_end) {
 
    if (Playing) {
-      put_game_end(Result_Unknown, game_end.stop_code);
+      put_game_end(Result::Unknown, game_end.stop_code);
       end_game(-(game_end.reason - '2'));
    }
 
-   if (game_end.stop_code == '1') {
-      std::exit(EXIT_SUCCESS);
-   }
+   if (game_end.stop_code == '1') std::exit(EXIT_SUCCESS);
 
    if (var::DXP_Initiator) next_game();
 }
 
 static void handle_chat(const Chat & chat) {
-
    std::cout << "chat: " << chat.text << std::endl;
    if (var::DXP_Board) std::cout << std::endl;
 }
 
 static void handle_back_req(const Back_Req & back_req) {
 
-   int ply = back_req.move_number * 2;
-   if (back_req.color_to_move != 'W') ply++; // TODO: use Start_Pos
+   int ply = (back_req.move_number - 1) * 2;
+   if (decode_side(back_req.color_to_move) != White) ply++;
+   if (Start_Pos.turn() != White) ply--; // shift if black played the first move
+
+   if (ply < 0 || ply > G_Game.size()) error("bad move number");
 
    put_back_acc('0');
 
@@ -311,7 +337,6 @@ static void handle_back_req(const Back_Req & back_req) {
 }
 
 static void handle_back_acc(const Back_Acc & /* back_acc */) {
-
    // ignore
 }
 
@@ -320,7 +345,7 @@ static void first_game() {
    assert(!Playing);
 
    My_Side = White;
-   Start_Pos.init();
+   Start_Pos = pos::Start;
 
    put_game_req(side_opp(My_Side), Time, Moves, Start_Pos);
 }
@@ -330,15 +355,18 @@ static void next_game() {
    assert(!Playing);
 
    My_Side = side_opp(My_Side);
-   Start_Pos.init();
+   Start_Pos = pos::Start;
 
    put_game_req(side_opp(My_Side), Time, Moves, Start_Pos);
 }
 
 static void start_game() {
 
-   G_Game.init(pos_fen(Start_Pos), Moves, Time, 0.0);
+   assert(!Playing);
+
+   G_Game.init(Start_Pos, Moves, Time, 0.0);
    Playing = true;
+   Last_Score = 0.0;
    update();
 }
 
@@ -346,47 +374,55 @@ static void end_game(int result) {
 
    assert(std::abs(result) <= 2); // +/- 2 for "unknown"
 
+   assert(Playing);
+
    // TODO: save game
 
-   if (std::abs(result) == 2) result = 0; // assume unknown is a draw
+   if (std::abs(result) == 2) result = Result::Draw; // assume unknown is a draw
 
-   if (std::abs(result) <= 1) {
+   if (std::abs(result) <= 1) { // finished
 
       Games++;
-      Score += result;
+      Total += result;
 
-      std::printf("%s  games %3d  score %+5.2f\n", result_to_string(result).c_str(), Games, double(Score) / double(Games));
+      std::printf("result %-4s  games %3d  score %+5.2f\n", result_to_string(result).c_str(), Games, double(Total) / double(Games));
+      if (var::DXP_Board) std::printf("\n");
+      std::fflush(stdout);
+
+   } else { // unfinished
+
+      pos::disp(G_Game.pos());
+
+      std::cout << "unfinished game; last eval = " << score_to_string(Last_Score) << " ###" << std::endl;
       if (var::DXP_Board) std::cout << std::endl;
    }
 
    Playing = false;
+   Last_Score = 0.0;
 }
 
 static void go_to(int ply) {
-
    G_Game.go_to(ply);
    Playing = true;
    update();
 }
 
-static void play_move(move_t mv, double time) {
-
+static void play_move(Move mv, double time) {
+   assert(Playing);
    G_Game.add_move(mv, time);
 }
 
-static void update() { // TODO: pondering and time-out?
+static void update() {
 
-   if (!Playing) return; // global variables might be "uninitialised"
+   assert(Playing);
 
    const Game & game = G_Game;
-   const Board & bd = game.board();
 
-   if (bd.turn() != My_Side) return; // TODO: pondering
+   if (game.turn() != My_Side) return; // no pondering in DXP mode
 
    if (game.is_end(BB_Adj)) {
 
-      int result = game.result(BB_Adj);
-      if (My_Side != White) result = -result;
+      int result = game.result(BB_Adj, My_Side);
 
       std::cout << "game ended (" << result_to_string(result) << ")" << std::endl;
       if (var::DXP_Board) std::cout << std::endl;
@@ -394,22 +430,30 @@ static void update() { // TODO: pondering and time-out?
       put_game_end(result, '0');
       end_game(+result);
 
-   } else if (Moves != 0 && game.pos() >= Moves * 2) { // all moves played
+   } else if (Moves != 0 && game.ply() >= Moves * 2) { // all moves played
 
       int result;
-      std::string comment = ml::itos(game.pos() / 2) + " moves played";
+      std::string comment = std::to_string(game.ply() / 2) + " moves played";
 
       if (game.is_end(true)) { // always adjudicate using bitbases
 
-         result = game.result(true);
-         if (My_Side != White) result = -result;
+         result = game.result(true, My_Side);
+         comment += ", endgame " + result_to_string(result);
 
-         comment += ", bitbase " + result_to_string(result);
+      } else if (Last_Score >= +3.0) {
+
+         result = Result::Win;
+         comment += ", adjudication " + result_to_string(result) + ", last eval = " + score_to_string(Last_Score);
+
+      } else if (Last_Score <= -3.0) {
+
+         result = Result::Loss;
+         comment += ", adjudication " + result_to_string(result) + ", last eval = " + score_to_string(Last_Score);
 
       } else {
 
-         result = Result_Unknown;
-         comment += ", unknown result";
+         result = Result::Unknown;
+         comment += ", unknown result, last eval = " + score_to_string(Last_Score);
       }
 
       std::cout << "game ended (" << comment << ")" << std::endl;
@@ -421,41 +465,50 @@ static void update() { // TODO: pondering and time-out?
 
    } else { // search
 
-      Search_Info & si = G_Search_Info;
+      Search_Input si;
+      si.move = true;
+      si.book = true;
+      si.set_time(game.moves(game.turn()), game.time(game.turn()), game.inc());
+      si.input = false;
+      si.output = var::DXP_Search ? Output_Terminal : Output_None;
 
-      si.init();
-      si.set_unique(true);
-      si.set_book(true);
-      si.set_time(game.moves(bd.turn()), game.time(bd.turn()), game.inc());
-      si.set_input(false);
-      si.set_output(var::DXP_Search ? Output_Terminal : Output_None);
+      Search_Output so;
+      search(so, game.node(), si);
 
-      search_id(bd);
-      move_t mv = G_Search.move();
-      double sc = double(G_Search.score()) / 100.0;
-      double time = G_Search.time();
+      Move mv = so.move;
+      double sc = double(so.score) / 100.0;
+      double time = so.time();
 
-      std::string move_string = move_to_string(mv, bd);
+      std::string move_string = move::to_string(mv, game.pos());
 
       put_move(mv, time);
       play_move(mv, time);
 
       if (var::DXP_Board) {
 
-         board_disp(bd);
+         pos::disp(game.pos());
 
-         std::printf("%s plays %s (%+.2f)\n", Engine_Name.c_str(), move_string.c_str(), sc);
+         std::cout << Engine_Name << " plays " << move_string;
+         if (so.score != score::None) std::cout << " (" << score_to_string(sc) << ")";
+         std::cout << std::endl;
          std::cout << std::endl;
       }
+
+      if (so.score != score::None) Last_Score = sc; // ignore forced moves
    }
 }
 
-static void put_game_req(int sd, double time, int moves, const Pos & pos) {
+static void error(const std::string & msg) {
+   put_chat("error: " + msg);
+   throw Bad_Input();
+}
+
+static void put_game_req(Side sd, double time, int moves, const Pos & pos) {
 
    Message msg;
 
    msg.game_req.version = 1;
-   msg.game_req.initiator_name = Engine_Name;
+   msg.game_req.initiator_name = Engine_Name + " " + Engine_Version;
    msg.game_req.follower_color = (sd == White) ? 'W' : 'Z';
    msg.game_req.thinking_time = time / 60.0;
    msg.game_req.number_of_moves = moves;
@@ -477,28 +530,28 @@ static void put_game_acc(char acceptance_code) {
 
    Message msg;
 
-   msg.game_acc.follower_name = Engine_Name;
+   msg.game_acc.follower_name = Engine_Name + " " + Engine_Version;
    msg.game_acc.acceptance_code = acceptance_code;
 
    put_string(encode_message('A', msg));
 }
 
-static void put_move(move_t mv, double time) {
+static void put_move(Move mv, double time) {
 
    Message msg;
 
-   int   from = move_from(mv);
-   int   to   = move_to(mv);
-   bit_t caps = move_captured(mv);
+   Square from = move::from(mv);
+   Square to   = move::to(mv);
+   Bit    caps = move::captured(mv);
 
    msg.move.time = time;
-   msg.move.from_field = square_to_50(from) + 1;
-   msg.move.to_field = square_to_50(to) + 1;
-   msg.move.number_captured = bit_count(caps);
+   msg.move.from_field = square_to_std(from);
+   msg.move.to_field   = square_to_std(to);
+   msg.move.number_captured = bit::count(caps);
    int i = 0;
-   for (bit_t b = caps; b != 0; b = bit_rest(b)) {
-      int sq = bit_first(b);
-      msg.move.captured_pieces[i++] = square_to_50(sq) + 1;
+   for (Bit b = caps; b != 0; b = bit::rest(b)) {
+      Square sq = bit::first(b);
+      msg.move.captured_pieces[i++] = square_to_std(sq);
    }
    assert(i == msg.move.number_captured);
 
@@ -529,16 +582,6 @@ static void put_chat(const std::string & s) {
    put_string(encode_message('C', msg));
 }
 
-static void put_back_req(int ply, int carry) {
-
-   Message msg;
-
-   msg.back_req.move_number = (ply + carry) / 2 + 1;
-   msg.back_req.color_to_move = ((ply + carry) % 2 == 0) ? 'W' : 'Z';
-
-   put_string(encode_message('B', msg));
-}
-
 static void put_back_acc(char acceptance_code) {
 
    Message msg;
@@ -554,14 +597,14 @@ static std::string encode_message(char header, const Message & msg) {
    s += header;
 
    switch (header) {
-   case 'R' : s += encode_game_req(msg.game_req); break;
-   case 'A' : s += encode_game_acc(msg.game_acc); break;
-   case 'M' : s += encode_move(msg.move);         break;
-   case 'E' : s += encode_game_end(msg.game_end); break;
-   case 'C' : s += encode_chat(msg.chat);         break;
-   case 'B' : s += encode_back_req(msg.back_req); break;
-   case 'K' : s += encode_back_acc(msg.back_acc); break;
-   default  : throw Bad_Output();                 break;
+      case 'R' : s += encode_game_req(msg.game_req); break;
+      case 'A' : s += encode_game_acc(msg.game_acc); break;
+      case 'M' : s += encode_move(msg.move);         break;
+      case 'E' : s += encode_game_end(msg.game_end); break;
+      case 'C' : s += encode_chat(msg.chat);         break;
+      case 'B' : s += encode_back_req(msg.back_req); break;
+      case 'K' : s += encode_back_acc(msg.back_acc); break;
+      default  : throw Bad_Output();                 break;
    }
 
    return s;
@@ -569,18 +612,18 @@ static std::string encode_message(char header, const Message & msg) {
 
 static void decode_message(char & header, Message & msg, const std::string & s) {
 
-   Scanner_DXP scan(s);
+   Scanner scan(s);
    header = scan.get_char();
 
    switch (header) {
-   case 'R' : decode_game_req(msg.game_req, scan); break;
-   case 'A' : decode_game_acc(msg.game_acc, scan); break;
-   case 'M' : decode_move(msg.move, scan);         break;
-   case 'E' : decode_game_end(msg.game_end, scan); break;
-   case 'C' : decode_chat(msg.chat, scan);         break;
-   case 'B' : decode_back_req(msg.back_req, scan); break;
-   case 'K' : decode_back_acc(msg.back_acc, scan); break;
-   default  : throw Bad_Input();                   break;
+      case 'R' : decode_game_req(msg.game_req, scan); break;
+      case 'A' : decode_game_acc(msg.game_acc, scan); break;
+      case 'M' : decode_move(msg.move, scan);         break;
+      case 'E' : decode_game_end(msg.game_end, scan); break;
+      case 'C' : decode_chat(msg.chat, scan);         break;
+      case 'B' : decode_back_req(msg.back_req, scan); break;
+      case 'K' : decode_back_acc(msg.back_acc, scan); break;
+      default  : throw Bad_Input();                   break;
    }
 }
 
@@ -591,7 +634,7 @@ static std::string encode_game_req(const Game_Req & game_req) {
    s += encode_int(game_req.version, 2);
    s += encode_string(game_req.initiator_name, 32);
    s += game_req.follower_color;
-   s += encode_int(ml::round(game_req.thinking_time), 3); // TODO: float
+   s += encode_int(ml::round(game_req.thinking_time), 3); // TODO: real?
    s += encode_int(game_req.number_of_moves, 3);
    s += game_req.starting_position;
 
@@ -617,11 +660,11 @@ static std::string encode_game_acc(const Game_Acc & game_acc) {
    return s;
 }
 
-static std::string encode_move(const Move & move) {
+static std::string encode_move(const Move_ & move) {
 
    std::string s;
 
-   s += encode_int(ml::round(move.time), 4); // TODO: float
+   s += encode_int(ml::round(move.time), 4); // TODO: real?
    s += encode_int(move.from_field, 2);
    s += encode_int(move.to_field, 2);
    s += encode_int(move.number_captured, 2);
@@ -671,12 +714,12 @@ static std::string encode_back_acc(const Back_Acc & back_acc) {
    return s;
 }
 
-static void decode_game_req(Game_Req & game_req, Scanner_DXP & scan) {
+static void decode_game_req(Game_Req & game_req, Scanner & scan) {
 
    game_req.version = decode_int(scan, 2);
    game_req.initiator_name = decode_string(scan, 32);
    game_req.follower_color = scan.get_char();
-   game_req.thinking_time = double(decode_int(scan, 3)); // TODO: float
+   game_req.thinking_time = decode_real(scan, 3);
    game_req.number_of_moves = decode_int(scan, 3);
 
    game_req.starting_position = scan.get_char();
@@ -693,7 +736,7 @@ static void decode_game_req(Game_Req & game_req, Scanner_DXP & scan) {
    if (!scan.eos()) throw Bad_Input();
 }
 
-static void decode_game_acc(Game_Acc & game_acc, Scanner_DXP & scan) {
+static void decode_game_acc(Game_Acc & game_acc, Scanner & scan) {
 
    game_acc.follower_name = decode_string(scan, 32);
    game_acc.acceptance_code = scan.get_char();
@@ -701,12 +744,16 @@ static void decode_game_acc(Game_Acc & game_acc, Scanner_DXP & scan) {
    if (!scan.eos()) throw Bad_Input();
 }
 
-static void decode_move(Move & move, Scanner_DXP & scan) {
+static void decode_move(Move_ & move, Scanner & scan) {
 
-   move.time = double(decode_int(scan, 4)); // TODO: float
+   move.time = decode_real(scan, 4);
    move.from_field = decode_int(scan, 2);
    move.to_field = decode_int(scan, 2);
    move.number_captured = decode_int(scan, 2);
+
+   if (move.number_captured < 0 || move.number_captured > 20) {
+      throw Bad_Input();
+   }
 
    for (int i = 0; i < move.number_captured; i++) {
       move.captured_pieces[i] = decode_int(scan, 2);
@@ -715,7 +762,7 @@ static void decode_move(Move & move, Scanner_DXP & scan) {
    if (!scan.eos()) throw Bad_Input();
 }
 
-static void decode_game_end(Game_End & game_end, Scanner_DXP & scan) {
+static void decode_game_end(Game_End & game_end, Scanner & scan) {
 
    game_end.reason = scan.get_char();
    game_end.stop_code = scan.get_char();
@@ -723,14 +770,14 @@ static void decode_game_end(Game_End & game_end, Scanner_DXP & scan) {
    if (!scan.eos()) throw Bad_Input();
 }
 
-static void decode_chat(Chat & chat, Scanner_DXP & scan) {
+static void decode_chat(Chat & chat, Scanner & scan) {
 
    chat.text = scan.get_field();
 
    if (!scan.eos()) throw Bad_Input();
 }
 
-static void decode_back_req(Back_Req & back_req, Scanner_DXP & scan) {
+static void decode_back_req(Back_Req & back_req, Scanner & scan) {
 
    back_req.move_number = decode_int(scan, 3);
    back_req.color_to_move = scan.get_char();
@@ -738,11 +785,17 @@ static void decode_back_req(Back_Req & back_req, Scanner_DXP & scan) {
    if (!scan.eos()) throw Bad_Input();
 }
 
-static void decode_back_acc(Back_Acc & back_acc, Scanner_DXP & scan) {
+static void decode_back_acc(Back_Acc & back_acc, Scanner & scan) {
 
    back_acc.acceptance_code = scan.get_char();
 
    if (!scan.eos()) throw Bad_Input();
+}
+
+static std::string score_to_string(double sc) {
+   char s[256];
+   std::sprintf(s, "%+.2f", sc);
+   return s;
 }
 
 static std::string encode_int(int n, int size) { // fill with '0'
@@ -760,7 +813,6 @@ static std::string encode_int(int n, int size) { // fill with '0'
 
    if (n != 0) throw Bad_Output();
 
-   assert(int(s.size()) == size);
    return s;
 }
 
@@ -778,30 +830,40 @@ static std::string encode_string(const std::string & s, int size) { // fill with
    return ns;
 }
 
-static int decode_int(Scanner_DXP & scan, int size) {
+static Side decode_side(char c) {
 
-   std::string s = scan.get_field(size);
-   return ml::stoi(s);
+   switch (c) {
+      case 'W' : return White;
+      case 'Z' : return Black;
+      default  : throw Bad_Input();
+   }
 }
 
-static std::string decode_string(Scanner_DXP & scan, int size) {
+static int decode_int(Scanner & scan, int size) {
+   std::string s = scan.get_field(size);
+   return std::stoi(s);
+}
 
+static double decode_real(Scanner & scan, int size) {
+   std::string s = scan.get_field(size);
+   return std::stod(s);
+}
+
+static std::string decode_string(Scanner & scan, int size) {
    std::string s = scan.get_field(size);
    return ml::trim(s);
 }
 
-Scanner_DXP::Scanner_DXP(const std::string & string) {
-
-   p_string = string;
+Scanner::Scanner(const std::string & s) {
+   p_string = s;
    p_pos = 0;
 }
 
-std::string Scanner_DXP::get_field() { // remaining characters
-
+std::string Scanner::get_field() { // remaining characters
    return get_field(int(p_string.size()) - p_pos);
 }
 
-std::string Scanner_DXP::get_field(int size) {
+std::string Scanner::get_field(int size) {
 
    std::string s;
 
@@ -812,20 +874,18 @@ std::string Scanner_DXP::get_field(int size) {
    return s;
 }
 
-bool Scanner_DXP::eos() const {
-
+bool Scanner::eos() const {
    return p_pos >= int(p_string.size());
 }
 
-char Scanner_DXP::get_char() {
-
+char Scanner::get_char() {
    if (eos()) throw Bad_Input();
    return p_string[p_pos++];
 }
 
 static std::string get_string() {
 
-   std::string s = socket_read();
+   std::string s = socket_::read();
 
    if (Disp_DXP) {
       std::cout << "< " << s << std::endl;
@@ -842,8 +902,8 @@ static void put_string(const std::string & s) {
       if (var::DXP_Board) std::cout << std::endl;
    }
 
-   socket_write(s);
+   socket_::write(s);
 }
 
-// end of dxp.cpp
+}
 

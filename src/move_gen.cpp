@@ -1,346 +1,342 @@
 
-// move_gen.cpp
-
 // includes
 
-#include <cmath>
-
-#include "bit.h"
+#include "bit.hpp"
+#include "common.hpp"
 #include "libmy.hpp"
-#include "list.h"
-#include "move.h"
-#include "move_gen.h"
-#include "pos.h"
+#include "list.hpp"
+#include "move_gen.hpp"
+#include "pos.hpp"
+#include "var.hpp"
 
 // prototypes
 
-static void add_man_moves         (List & list, const Pos & pos, bit_t froms);
-static void add_man_captures      (List & list, const Pos & pos, bit_t froms);
-static void add_man_captures      (List & list, const Pos & pos, bit_t bo, bit_t be, int from, int inc);
-static void add_man_captures_rec  (List & list, const Pos & pos, int start, bit_t captures, bit_t bo, bit_t be, int from);
+static void gen_quiets (List & list, const Pos & pos);
 
-static void add_king_moves        (List & list, const Pos & pos, int from);
-static void add_king_captures     (List & list, const Pos & pos, int from, int opp);
-static void add_king_captures_rec (List & list, const Pos & pos, int start, bit_t captures, bit_t bo, bit_t be, int captured, int inc, int opp);
+static void add_man_moves         (List & list, const Pos & pos, Bit froms);
+static void add_man_captures      (List & list, const Pos & pos, Bit bd, Bit be, Bit froms);
+static void add_man_captures      (List & list, Bit bd, Bit be, Square from, Inc inc);
+static void add_man_captures_rec  (List & list, Bit bd, Bit be, Square start, Square jump, Square from, Bit caps);
 
-static bit_t contact_captures (const Pos & pos, int sd);
+static void add_king_moves        (List & list, const Pos & pos, Square from);
+static void add_king_captures     (List & list, const Pos & pos, Bit bd, Bit be, Square from);
+static void add_king_captures_rec (List & list, const Pos & pos, Bit bd, Bit be, Square start, Square jump, Inc inc, Bit caps);
 
-static bool king_can_capture (const Pos & pos, int from, int opp);
+static Bit  contact_captures (const Pos & pos, Side sd);
+static bool king_can_capture (const Pos & pos, Square from, Side def);
 
-static void add_moves_from (List & list, bit_t froms, int inc);
-static void add_moves_to   (List & list, bit_t tos, int inc);
-
-static void add_move    (List & list, int from, int to);
-static void add_capture (List & list, int from, int to, bit_t captures);
+static void add_moves_from (List & list, Bit froms, Inc inc);
+static void add_moves_to   (List & list, Bit tos, Inc inc);
 
 // functions
 
 void gen_moves(List & list, const Pos & pos) {
-
    gen_captures(list, pos);
-
-   if (list.size() == 0) {
-      gen_quiets(list, pos);
-   }
+   if (list.size() == 0) gen_quiets(list, pos);
 }
 
 void gen_captures(List & list, const Pos & pos) {
 
    list.clear();
 
-   int me  = pos.turn();
-   int opp = side_opp(me);
+   Side atk = pos.turn();
+   Side def = side_opp(atk);
+
+   Bit bd = pos.side(def) & bit::Inner;
+   Bit be = pos.empty();
 
    // men
 
-   add_man_captures(list, pos, pos.man(me));
+   add_man_captures(list, pos, bd, be, pos.man(atk));
 
    // kings
 
-   for (bit_t b = pos.king(me); b != 0; b = bit_rest(b)) {
-      int from = bit_first(b);
-      add_king_captures(list, pos, from, opp);
+   for (Bit b = pos.king(atk); b != 0; b = bit::rest(b)) {
+      Square from = bit::first(b);
+      add_king_captures(list, pos, bd, be, from);
    }
 }
 
 void gen_promotions(List & list, const Pos & pos) {
 
-   assert(!pos_is_capture(pos));
-
    list.clear();
 
-   int me = pos.turn();
-   bit_t mp = pos.man(me);
+   Side atk = pos.turn();
 
-   if (me == White) {
-      add_man_moves(list, pos, mp & bit_rank(1));
-   } else {
-      add_man_moves(list, pos, mp & bit_rank(8));
-   }
+   add_man_moves(list, pos, pos.man(atk) & bit::rank(Line_Size - 2, atk));
 }
 
-void gen_quiets(List & list, const Pos & pos) {
-
-   assert(!pos_is_capture(pos));
+static void gen_quiets(List & list, const Pos & pos) {
 
    list.clear();
 
-   int me = pos.turn();
+   Side atk = pos.turn();
 
    // men
 
-   add_man_moves(list, pos, pos.man(me));
+   add_man_moves(list, pos, pos.man(atk));
 
    // kings
 
-   for (bit_t b = pos.king(me); b != 0; b = bit_rest(b)) {
-      int from = bit_first(b);
+   for (Bit b = pos.king(atk); b != 0; b = bit::rest(b)) {
+      Square from = bit::first(b);
       add_king_moves(list, pos, from);
    }
 }
 
-static void add_man_moves(List & list, const Pos & pos, bit_t froms) {
+static void add_man_moves(List & list, const Pos & pos, Bit froms) {
 
-   int me = pos.turn();
-   bit_t e = pos.empty();
+   Side atk = pos.turn();
 
-   if (me == White) {
-      add_moves_from(list, froms & (e << 5), -5);
-      add_moves_from(list, froms & (e << 6), -6);
+   Bit be = pos.empty();
+
+   if (atk == White) {
+      add_moves_from(list, froms & (be << I1), -I1);
+      add_moves_from(list, froms & (be << J1), -J1);
    } else {
-      add_moves_from(list, froms & (e >> 5), +5);
-      add_moves_from(list, froms & (e >> 6), +6);
+      add_moves_from(list, froms & (be >> I1), +I1);
+      add_moves_from(list, froms & (be >> J1), +J1);
    }
 }
 
-static void add_man_captures(List & list, const Pos & pos, bit_t froms) {
+static void add_man_captures(List & list, const Pos & pos, Bit bd, Bit be, Bit froms) {
 
-   int me  = pos.turn();
-   int opp = side_opp(me);
-
-   // bit_t mp = pos.man(me);
-   bit_t op = pos.piece(opp);
-   bit_t e = pos.empty();
-
-   for (bit_t b = froms & (op << 6) & (e << 12); b != 0; b = bit_rest(b)) {
-      int from = bit_first(b);
-      add_man_captures(list, pos, op, e, from, -6);
+   for (Bit b = froms & (bd << J1) & (be << J2); b != 0; b = bit::rest(b)) {
+      Square from = bit::first(b);
+      add_man_captures(list, bd, be, from, -J1);
    }
 
-   for (bit_t b = froms & (op << 5) & (e << 10); b != 0; b = bit_rest(b)) {
-      int from = bit_first(b);
-      add_man_captures(list, pos, op, e, from, -5);
+   for (Bit b = froms & (bd << I1) & (be << I2); b != 0; b = bit::rest(b)) {
+      Square from = bit::first(b);
+      add_man_captures(list, bd, be, from, -I1);
    }
 
-   for (bit_t b = froms & (op >> 5) & (e >> 10); b != 0; b = bit_rest(b)) {
-      int from = bit_first(b);
-      add_man_captures(list, pos, op, e, from, +5);
+   for (Bit b = froms & (bd >> I1) & (be >> I2); b != 0; b = bit::rest(b)) {
+      Square from = bit::first(b);
+      add_man_captures(list, bd, be, from, +I1);
    }
 
-   for (bit_t b = froms & (op >> 6) & (e >> 12); b != 0; b = bit_rest(b)) {
-      int from = bit_first(b);
-      add_man_captures(list, pos, op, e, from, +6);
+   for (Bit b = froms & (bd >> J1) & (be >> J2); b != 0; b = bit::rest(b)) {
+      Square from = bit::first(b);
+      add_man_captures(list, bd, be, from, +J1);
    }
 }
 
-static void add_man_captures(List & list, const Pos & pos, bit_t bo, bit_t be, int from, int inc) {
-
-   assert(square_is_ok(from));
-   assert(inc != 0);
-
-   int sq = from + inc;
-
-   add_man_captures_rec(list, pos, from, bit(sq), bit_remove(bo, sq), bit_add(be, from), sq + inc);
+static void add_man_captures(List & list, Bit bd, Bit be, Square from, Inc inc) {
+   Square sq = square_make(from + inc);
+   add_man_captures_rec(list, bd, bit::add(be, from), from, sq, square_make(sq + inc), Bit(0));
 }
 
-static void add_man_captures_rec(List & list, const Pos & pos, int start, bit_t captures, bit_t bo, bit_t be, int from) {
+static void add_man_captures_rec(List & list, Bit bd, Bit be, Square start, Square jump, Square from, Bit caps) {
 
-   assert(square_is_ok(from));
-   assert(bit_test(be, from));
+   assert(bit::has(be, from));
 
-   for (int dir = 0; dir < Dir_Size; dir++) {
+   bd = bit::remove(bd, jump);
+   caps = bit::add(caps, jump);
 
-      int inc = Inc[dir];
-      int sq = from + inc;
+   for (Bit b = bit::man_attack(from) & bd; b != 0; b = bit::rest(b)) {
 
-      if (bit_test(bo, sq) && bit_test(be, sq + inc)) { // TODO: robust test ###
-         add_man_captures_rec(list, pos, start, bit_add(captures, sq), bit_remove(bo, sq), be, sq + inc);
+      Square sq = bit::first(b);
+      Square to = square_make(sq * 2 - from); // square behind sq
+
+      if (bit::has(be, to)) {
+         add_man_captures_rec(list, bd, be, start, sq, to, caps);
       }
    }
 
-   add_capture(list, start, from, captures);
+   list.add_capture(start, from, caps);
 }
 
-static void add_king_moves(List & list, const Pos & pos, int from) {
+static void add_king_moves(List & list, const Pos & pos, Square from) {
 
-   assert(square_is_ok(from));
+   Bit be = pos.empty();
 
-   bit_t blockers = pos.all();
-   bit_t moves = king_attack(from, blockers) & ~blockers;
-
-   for (bit_t b = moves; b != 0; b = bit_rest(b)) {
-      int to = bit_first(b);
-      add_move(list, from, to);
+   for (Bit b = bit::king_attack(from, be) & be; b != 0; b = bit::rest(b)) {
+      Square to = bit::first(b);
+      list.add_move(from, to);
    }
 }
 
-static void add_king_captures(List & list, const Pos & pos, int from, int opp) {
+static void add_king_captures(List & list, const Pos & pos, Bit bd, Bit be, Square from) {
 
-   assert(square_is_ok(from));
-   assert(side_is_ok(opp));
+   be = bit::add(be, from);
 
-   bit_t blockers = pos.all();
+   for (Bit b = bit::king_attack(from) & bd; b != 0; b = bit::rest(b)) {
 
-   bit_t bo = pos.piece(opp);
-   bit_t be = bit_add(pos.empty(), from);
+      Square sq = bit::first(b);
 
-   bit_t targets = king_attack_almost(from) & bo; // would be captures on an empty board
-
-   for (bit_t b = targets; b != 0; b = bit_rest(b)) {
-
-      int sq = bit_first(b);
-
-      if ((bit_between(from, sq) & blockers) == 0) {
-
-         int inc = line_inc(from, sq);
-         assert(inc != 0);
-
-         assert(square_is_ok(sq + inc));
-
-         if (bit_test(be, sq + inc)) {
-            add_king_captures_rec(list, pos, from, 0, bo, be, sq, inc, opp);
-         }
+      if (bit::is_incl(bit::capture_mask(from, sq), be)) {
+         Inc inc = bit::line_inc(from, sq);
+         add_king_captures_rec(list, pos, bd, be, from, sq, inc, Bit(0));
       }
    }
 }
 
-static void add_king_captures_rec(List & list, const Pos & pos, int start, bit_t captures, bit_t bo, bit_t be, int captured, int inc, int opp) {
+static void add_king_captures_rec(List & list, const Pos & pos, Bit bd, Bit be, Square start, Square jump, Inc inc, Bit caps) {
 
-   assert(square_is_ok(captured));
-   assert(inc != 0);
-   assert(side_is_ok(opp));
+   Square next = square_make(jump + inc);
+   assert(bit::has(be, next));
 
-   assert(bit_test(be, captured + inc));
+   bd = bit::remove(bd, jump);
+   caps = bit::add(caps, jump);
 
-   captures = bit_add(captures, captured);
-   bo = bit_remove(bo, captured);
+   Bit ray = bit::beyond(square_make(jump - inc), jump); // ray(jump, inc)
+   Bit froms = bit::attack(jump, ray, be);
 
-   for (int from = captured + inc; bit_test(be, from); from += inc) { // TODO: robust test ###
+   for (Bit bf = froms & be; bf != 0; bf = bit::rest(bf)) {
 
-      bit_t targets = king_attack_almost(from) & bo; // would be captures on an empty board
+      Square from = bit::first(bf);
 
-      for (bit_t b = targets; b != 0; b = bit_rest(b)) {
+      for (Bit b = bit::king_attack(from) & bd; b != 0; b = bit::rest(b)) {
 
-         int sq = bit_first(b);
+         Square sq = bit::first(b);
 
-         if ((bit_between(from, sq) & ~be) == 0) {
+         if (bit::is_incl(bit::capture_mask(from, sq), be)) {
 
-            int new_inc = line_inc(from, sq);
-            assert(new_inc != 0);
+            Inc new_inc = bit::line_inc(from, sq);
 
             assert(new_inc != -inc);
-            if (new_inc == +inc && from != captured + inc) {
+            if (new_inc == +inc && from != next) { // duplicate capture
                continue;
             }
 
-            if (bit_test(be, sq + new_inc)) {
-               add_king_captures_rec(list, pos, start, captures, bo, be, sq, new_inc, opp);
-            }
+            add_king_captures_rec(list, pos, bd, be, start, sq, new_inc, caps);
          }
       }
 
-      add_capture(list, start, from, captures);
+      bool cond = var::Variant == var::Killer && pos.is_piece(jump, King) && from != next;
+      if (!cond) list.add_capture(start, from, caps);
    }
 }
 
-void add_exchanges(List & list, const Pos & pos) {
+void add_sacs(List & list, const Pos & pos) {
 
-   bit_t wm = pos.wm();
-   bit_t bm = pos.bm();
+   // list.clear();
 
-   bit_t e = Bit_Squares ^ wm ^ bm;
+   Side atk = pos.turn();
+   Side def = side_opp(atk);
+
+   Bit mp = pos.man(atk);
+   Bit op = pos.side(def);
+   Bit e  = pos.empty();
 
    if (pos.turn() == White) {
 
-      bit_t mp = wm;
-      bit_t op = bm;
+      // init
 
-      bit_t strong = ((bit_file(1) | bit_rank(8) | (mp >> 10)) & (mp >> 5) & (e << 5))
-                   | ((bit_file(8) | bit_rank(8) | (mp >> 12)) & (mp >> 6) & (e << 6));
+      uint64 strong = ((bit::file(1)             | bit::rank(Line_Size - 2) | (mp >> I2)) & (mp >> I1) & (e << I1))
+                    | ((bit::file(Line_Size - 2) | bit::rank(Line_Size - 2) | (mp >> J2)) & (mp >> J1) & (e << J1));
 
-      bit_t weak = ((mp << 6) & (e << 12)) | ((mp << 5) & (e << 10))
-                 | ((mp >> 5) & (e >> 10)) | ((mp >> 6) & (e >> 12));
+      uint64 weak = ((mp << J1) & (e << J2)) | ((mp << I1) & (e << I2))
+                  | ((mp >> I1) & (e >> I2)) | ((mp >> J1) & (e >> J2));
 
-      bit_t target = strong & ~weak;
+      uint64 target = strong & ~weak;
 
-      bit_t pin = ((mp << 6) & (op << 12)) | ((mp << 5) & (op << 10))
-                | ((mp >> 5) & (op >> 10)) | ((mp >> 6) & (op >> 12));
+      uint64 pin = ((mp << J1) & (op << J2)) | ((mp << I1) & (op << I2))
+                 | ((mp >> I1) & (op >> I2)) | ((mp >> J1) & (op >> J2));
 
-      bit_t w5 = 0;
-      w5 |= ((op << 5) & (target >> 5)) & ~((op << 6) & (e >> 6)) & ~((op >> 6) & (e << 6));
-      w5 |= ((op << 6) & ((e & target) >> 6)) & ~(op << 5) & ~((op >> 6) & (e << 6));
-      w5 |= ((op >> 6) & ((e & target) << 6)) & ~(op << 5) & ~((op << 6) & (e >> 6));
-      w5 &= ((mp & ~pin) >> 5) & e;
+      uint64 danger_i = ((op << I1) & (e >> I1)) | ((op >> I1) & (e << I1));
+      uint64 danger_j = ((op << J1) & (e >> J1)) | ((op >> J1) & (e << J1));
 
-      bit_t w6 = 0;
-      w6 |= ((op << 6) & (target >> 6)) & ~((op << 5) & (e >> 5)) & ~((op >> 5) & (e << 5));
-      w6 |= ((op << 5) & ((e & target) >> 5)) & ~(op << 6) & ~((op >> 5) & (e << 5));
-      w6 |= ((op >> 5) & ((e & target) << 5)) & ~(op << 6) & ~((op << 5) & (e >> 5));
-      w6 &= ((mp & ~pin) >> 6) & e;
+      uint64 wi = 0;
+      uint64 wj = 0;
 
-      add_moves_to(list, w5, -5);
-      add_moves_to(list, w6, -6);
+      // exchange
+
+      wi |= (target >> I1) & (op << I1) & ~danger_j;
+      wj |= (target >> J1) & (op << J1) & ~danger_i;
+
+      wi |= ~(op << I1) & (op << J1) & ((e & target) >> J1);
+      wj |= ~(op << J1) & (op << I1) & ((e & target) >> I1);
+
+      wi |= ~(op << I1) & (op >> J1) & ((e & target) << J1);
+      wj |= ~(op << J1) & (op >> I1) & ((e & target) << I1);
+
+      // create opponent hole
+
+      uint64 opp_weak = ((op << I1) & (e  << I2)) | ((op << J1) & (e  << J2));
+      uint64 opp_pin  = ((op >> I1) & (mp >> I2)) | ((op >> J1) & (mp >> J2));
+
+      Bit opp_target = op & opp_weak & opp_pin;
+
+      wi |= ((mp & ~weak) >> I1) & (opp_target << I1) & ~danger_j;
+      wj |= ((mp & ~weak) >> J1) & (opp_target << J1) & ~danger_i;
+
+      // wrap up
+
+      wi &= ((mp & ~pin) >> I1) & e;
+      wj &= ((mp & ~pin) >> J1) & e;
+
+      add_moves_to(list, Bit(wi), -I1);
+      add_moves_to(list, Bit(wj), -J1);
 
    } else { // Black
 
-      bit_t mp = bm;
-      bit_t op = wm;
+      // init
 
-      bit_t strong = ((bit_file(1) | bit_rank(1) | (mp << 12)) & (mp << 6) & (e >> 6))
-                   | ((bit_file(8) | bit_rank(1) | (mp << 10)) & (mp << 5) & (e >> 5));
+      uint64 strong = ((bit::file(1)             | bit::rank(1) | (mp << J2)) & (mp << J1) & (e >> J1))
+                    | ((bit::file(Line_Size - 2) | bit::rank(1) | (mp << I2)) & (mp << I1) & (e >> I1));
 
-      bit_t weak = ((mp << 6) & (e << 12)) | ((mp << 5) & (e << 10))
-                 | ((mp >> 5) & (e >> 10)) | ((mp >> 6) & (e >> 12));
+      uint64 weak = ((mp << J1) & (e << J2)) | ((mp << I1) & (e << I2))
+                  | ((mp >> I1) & (e >> I2)) | ((mp >> J1) & (e >> J2));
 
-      bit_t target = strong & ~weak;
+      uint64 pin = ((mp << J1) & (op << J2)) | ((mp << I1) & (op << I2))
+                 | ((mp >> I1) & (op >> I2)) | ((mp >> J1) & (op >> J2));
 
-      bit_t pin = ((mp << 6) & (op << 12)) | ((mp << 5) & (op << 10))
-                | ((mp >> 5) & (op >> 10)) | ((mp >> 6) & (op >> 12));
+      uint64 danger_i = ((op >> I1) & (e << I1)) | ((op << I1) & (e >> I1));
+      uint64 danger_j = ((op >> J1) & (e << J1)) | ((op << J1) & (e >> J1));
 
-      bit_t b5 = 0;
-      b5 |= ((op >> 5) & (target << 5)) & ~((op >> 6) & (e << 6)) & ~((op << 6) & (e >> 6));
-      b5 |= ((op >> 6) & ((e & target) << 6)) & ~(op >> 5) & ~((op << 6) & (e >> 6));
-      b5 |= ((op << 6) & ((e & target) >> 6)) & ~(op >> 5) & ~((op >> 6) & (e << 6));
-      b5 &= ((mp & ~pin) << 5) & e;
+      uint64 bi = 0;
+      uint64 bj = 0;
 
-      bit_t b6 = 0;
-      b6 |= ((op >> 6) & (target << 6)) & ~((op >> 5) & (e << 5)) & ~((op << 5) & (e >> 5));
-      b6 |= ((op >> 5) & ((e & target) << 5)) & ~(op >> 6) & ~((op << 5) & (e >> 5));
-      b6 |= ((op << 5) & ((e & target) >> 5)) & ~(op >> 6) & ~((op >> 5) & (e << 5));
-      b6 &= ((mp & ~pin) << 6) & e;
+      // exchange
 
-      add_moves_to(list, b5, +5);
-      add_moves_to(list, b6, +6);
+      uint64 target = strong & ~weak;
+
+      bi |= (target << I1) & (op >> I1) & ~danger_j;
+      bj |= (target << J1) & (op >> J1) & ~danger_i;
+
+      bi |= ~(op >> I1) & (op >> J1) & ((e & target) << J1);
+      bj |= ~(op >> J1) & (op >> I1) & ((e & target) << I1);
+
+      bi |= ~(op >> I1) & (op << J1) & ((e & target) >> J1);
+      bj |= ~(op >> J1) & (op << I1) & ((e & target) >> I1);
+
+      // create opponent hole
+
+      uint64 opp_weak = ((op >> I1) & (e  >> I2)) | ((op >> J1) & (e  >> J2));
+      uint64 opp_pin  = ((op << I1) & (mp << I2)) | ((op << J1) & (mp << J2));
+
+      Bit opp_target = op & opp_weak & opp_pin;
+
+      bi |= ((mp & ~weak) << I1) & (opp_target >> I1) & ~danger_j;
+      bj |= ((mp & ~weak) << J1) & (opp_target >> J1) & ~danger_i;
+
+      // wrap up
+
+      bi &= ((mp & ~pin) << I1) & e;
+      bj &= ((mp & ~pin) << J1) & e;
+
+      add_moves_to(list, Bit(bi), +I1);
+      add_moves_to(list, Bit(bj), +J1);
    }
 }
 
-bool can_move(const Pos & pos, int sd) {
+bool can_move(const Pos & pos, Side sd) {
 
-   assert(side_is_ok(sd));
-
-   bit_t e = pos.empty();
+   Bit be = pos.empty();
 
    // man moves
 
-   bit_t mp = pos.man(sd);
+   Bit bm = pos.man(sd);
 
    if (sd == White) {
-      mp &= (e << 5) | (e << 6);
+      bm &= (be << I1) | (be << J1);
    } else {
-      mp &= (e >> 5) | (e >> 6);
+      bm &= (be >> I1) | (be >> J1);
    }
 
-   if (mp != 0) return true;
+   if (bm != 0) return true;
 
    // contact captures
 
@@ -348,69 +344,56 @@ bool can_move(const Pos & pos, int sd) {
 
    // king moves
 
-   for (bit_t b = pos.king(sd); b != 0; b = bit_rest(b)) {
+   for (Bit b = pos.king(sd); b != 0; b = bit::rest(b)) {
 
-      int from = bit_first(b);
+      Square from = bit::first(b);
 
-      bit_t moves = king_attack_one(from) & e;
+      Bit moves = bit::man_attack(from) & be; // single step
       if (moves != 0) return true;
    }
 
    return false;
 }
 
-bool can_capture(const Pos & pos, int sd) {
+bool can_capture(const Pos & pos, Side sd) {
 
-   assert(side_is_ok(sd));
-
-   int me  = sd;
-   int opp = side_opp(me);
+   Side atk = sd;
+   Side def = side_opp(atk);
 
    // men
 
-   if (contact_captures(pos, me) != 0) return true;
+   if (contact_captures(pos, atk) != 0) return true;
 
    // kings
 
-   for (bit_t b = pos.king(me); b != 0; b = bit_rest(b)) {
-      int from = bit_first(b);
-      if (king_can_capture(pos, from, opp)) return true;
+   for (Bit b = pos.king(atk); b != 0; b = bit::rest(b)) {
+      Square from = bit::first(b);
+      if (king_can_capture(pos, from, def)) return true;
    }
 
    return false;
 }
 
-static bit_t contact_captures(const Pos & pos, int sd) {
+static Bit contact_captures(const Pos & pos, Side sd) {
 
-   assert(side_is_ok(sd));
+   Bit ba = pos.side(sd);
+   Bit bd = pos.side(side_opp(sd));
+   Bit be = pos.empty();
 
-   bit_t mp = pos.piece(sd);
-   bit_t op = pos.piece(side_opp(sd));
-
-   bit_t e = Bit_Squares ^ mp ^ op;
-
-   return mp & (((op << 6) & (e << 12)) | ((op << 5) & (e << 10))
-              | ((op >> 5) & (e >> 10)) | ((op >> 6) & (e >> 12)));
+   return ba & (((bd << J1) & (be << J2)) | ((bd << I1) & (be << I2))
+              | ((bd >> I1) & (be >> I2)) | ((bd >> J1) & (be >> J2)));
 }
 
-static bool king_can_capture(const Pos & pos, int from, int opp) {
+static bool king_can_capture(const Pos & pos, Square from, Side def) {
 
-   assert(square_is_ok(from));
-   assert(side_is_ok(opp));
+   Bit bd = pos.side(def) & bit::Inner;
+   Bit be = pos.empty();
 
-   bit_t blockers = pos.all();
+   for (Bit b = bit::king_attack(from) & bd; b != 0; b = bit::rest(b)) {
 
-   bit_t op = pos.piece(opp);
-   bit_t e = pos.empty();
+      Square sq = bit::first(b);
 
-   bit_t targets = king_attack_almost(from) & op; // would be captures on an empty board
-
-   for (bit_t b = targets; b != 0; b = bit_rest(b)) {
-
-      int sq = bit_first(b);
-
-      if ((bit_between(from, sq) & blockers) == 0
-       && bit_test(e, sq + line_inc(from, sq))) {
+      if (bit::is_incl(bit::capture_mask(from, sq), be)) {
          return true;
       }
    }
@@ -418,33 +401,19 @@ static bool king_can_capture(const Pos & pos, int from, int opp) {
    return false;
 }
 
-static void add_moves_from(List & list, bit_t froms, int inc) {
+static void add_moves_from(List & list, Bit froms, Inc inc) {
 
-   for (bit_t b = froms; b != 0; b = bit_rest(b)) {
-      int from = bit_first(b);
-      add_move(list, from, from + inc);
+   for (Bit b = froms; b != 0; b = bit::rest(b)) {
+      Square from = bit::first(b);
+      list.add_move(from, square_make(from + inc));
    }
 }
 
-static void add_moves_to(List & list, bit_t tos, int inc) {
+static void add_moves_to(List & list, Bit tos, Inc inc) {
 
-   for (bit_t b = tos; b != 0; b = bit_rest(b)) {
-      int to = bit_first(b);
-      add_move(list, to - inc, to);
+   for (Bit b = tos; b != 0; b = bit::rest(b)) {
+      Square to = bit::first(b);
+      list.add_move(square_make(to - inc), to);
    }
 }
-
-static void add_move(List & list, int from, int to) {
-
-   move_t move = move_make(from, to);
-   list.add_move(move);
-}
-
-static void add_capture(List & list, int from, int to, bit_t captures) {
-
-   move_t move = move_make(from, to, captures);
-   list.add_capture(move);
-}
-
-// end of move_gen.cpp
 

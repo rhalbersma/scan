@@ -3,23 +3,27 @@
 
 EXE = scan
 
-OBJS = bb_base.o bb_comp.o bb_index.o bit.o board.o book.o dxp.o eval.o \
-       fen.o game.o hash.o libmy.o list.o main.o move.o move_gen.o pos.o \
-       score.o search.o socket.o sort.o thread.o trans.o tuple.o util.o var.o
+OBJS = bb_base.o bb_comp.o bb_index.o bit.o book.o common.o dxp.o eval.o \
+       fen.o game.o hash.o hub.o libmy.o list.o main.o move.o move_gen.o \
+       pos.o score.o search.o socket.o sort.o thread.o tt.o util.o var.o
 
 # rules
 
-all: $(EXE) .depend
+all: $(EXE)
 
 clean:
-	$(RM) *.o .depend
+	$(RM) $(OBJS) .depend # keep exe
 
 # general
 
 CXX      = g++
-# CXXFLAGS = 
-LDFLAGS  = -L.
-LIBS     = -lm -lpthread
+CXXFLAGS = -pthread
+LDFLAGS  = -pthread
+LIBS     = -lm
+
+# warnings
+
+CXXFLAGS += -ansi -pedantic -Wall -Wextra
 
 # C++
 
@@ -27,38 +31,19 @@ CXXFLAGS += -std=c++11 -fno-rtti
 
 # optimisation
 
-CXXFLAGS += -O2
-CXXFLAGS += -mpopcnt
+CXXFLAGS += -O2 -mpopcnt
+LDFLAGS  += -O2
 
 CXXFLAGS += -flto
 LDFLAGS  += -flto
-
-# branch optimisation
-
-# CXXFLAGS += -fprofile-arcs
-# CXXFLAGS += -fbranch-probabilities
-
-# debug
-
-# CXXFLAGS += -DDEBUG
-# CXXFLAGS += -g
-# LDFLAGS  += -g
-
-# profile
-
-# CXXFLAGS += -pg
-# LDFLAGS  += -pg
 
 # dependencies
 
 $(EXE): $(OBJS)
 	$(CXX) $(LDFLAGS) -o $@ $(OBJS) $(LIBS)
 
-%.s: %.cpp
-	$(CXX) -S $(CXXFLAGS) $<
-
 .depend:
-	$(CXX) -MM $(OBJS:.o=.cpp) > $@
+	$(CXX) $(CXXFLAGS) -MM $(OBJS:.o=.cpp) > $@
 
 include .depend
 

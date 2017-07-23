@@ -1,35 +1,36 @@
 
-// main.cpp
-
 // includes
 
-#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
-#include "bb_base.h"
-#include "bb_comp.h"
-#include "board.h"
-#include "book.h"
-#include "dxp.h"
-#include "eval.h"
-#include "fen.h"
-#include "game.h"
-#include "hash.h"
+#include "bb_base.hpp"
+#include "bb_comp.hpp"
+#include "bb_index.hpp"
+#include "bit.hpp"
+#include "book.hpp"
+#include "dxp.hpp"
+#include "eval.hpp"
+#include "fen.hpp"
+#include "game.hpp"
+#include "hash.hpp"
+#include "hub.hpp"
 #include "libmy.hpp"
-#include "list.h"
-#include "move_gen.h"
-#include "pos.h"
-#include "search.h"
-#include "sort.h"
-#include "thread.h"
-#include "tuple.h"
-#include "util.h"
-#include "var.h"
+#include "list.hpp"
+#include "move.hpp"
+#include "move_gen.hpp"
+#include "pos.hpp"
+#include "search.hpp"
+#include "sort.hpp"
+#include "thread.hpp"
+#include "tt.hpp"
+#include "util.hpp"
+#include "var.hpp"
 
 // types
 
@@ -37,14 +38,16 @@ class Terminal {
 
 private :
 
+   static constexpr double Time { 10.0 };
+
    bool p_computer[Side_Size];
    Game p_game;
-   int p_depth;
+   Depth p_depth;
    double p_time;
 
-   move_t user_move ();
-   void   new_game  (const std::string & fen = Start_FEN);
-   void   go_to     (int pos);
+   Move user_move ();
+   void new_game  (const Pos & pos = pos::Start);
+   void go_to     (int ply);
 
 public :
 
@@ -53,44 +56,52 @@ public :
 
 // prototypes
 
-static void init     ();
 static void hub_loop ();
+
+static void disp_game (const Game & game);
+
+static void init_high ();
+static void init_low  ();
 
 // functions
 
 int main(int argc, char * argv[]) {
 
-   std::cout << "Scan 2.0 by Fabien Letouzey" << std::endl;
-
    std::string arg = "";
    if (argc > 1) arg = argv[1];
 
-   bit_init();
-   hash_init();
-   tuple_init();
+   common_init();
+   bit::init();
+   hash::init();
+   pos::init();
    var::init();
 
-   board_init();
    bb::comp_init();
+   bb::index_init();
 
    ml::rand_init(); // after hash keys
+
+   var::load("scan.ini");
 
    if (arg == "") { // terminal
 
       listen_input();
-      init();
+
+      init_high();
 
       Terminal term;
       term.loop();
 
    } else if (arg == "dxp") {
 
-      init();
-      dxp_loop();
+      init_high();
+
+      dxp::loop();
 
    } else if (arg == "hub") {
 
       listen_input();
+
       hub_loop();
 
    } else {
@@ -102,168 +113,201 @@ int main(int argc, char * argv[]) {
    return EXIT_SUCCESS;
 }
 
-static void init() {
-
-   var::load("scan.ini");
-   var::update();
-
-   std::cout << std::endl;
-
-   eval_init();
-   search_init();
-   if (var::Book) book::init();
-   if (var::BB) bb::init();
-
-   std::cout << "done" << std::endl;
-   std::cout << std::endl;
-}
-
 static void hub_loop() {
 
-   var::load("scan.ini");
+   Game game;
 
-   Board bd;
-   bd.init();
-
-   Search_Info & si = G_Search_Info;
+   Search_Input si;
    si.init();
 
    while (true) {
 
-      std::string line;
-      if (!get_line(line)) { // EOF
-         std::exit(EXIT_SUCCESS);
+      std::string line = hub::read();
+      hub::Scanner scan(line);
+
+      if (scan.eos()) { // empty line
+         hub::error("missing command");
+         continue;
       }
 
-      std::stringstream ss(line);
-
-      std::string command;
-      ss >> command;
+      std::string command = scan.get_command();
 
       if (false) {
 
-      } else if (command == "analyse") {
-
-         si.set_unique(false);
-         si.set_book(false);
-         si.set_input(true);
-         si.set_output(Output_Hub);
-
-         search_id(bd);
-         move_t mv = G_Search.move();
-         std::cout << "move " << move_to_hub(mv) << std::endl;
-
-      } else if (command == "depth") {
-
-         std::string arg;
-         ss >> arg;
-
-         int depth = ml::stoi(arg);
-         si.set_depth(depth);
-
       } else if (command == "go") {
 
-         si.set_unique(true);
-         si.set_book(true);
-         si.set_input(true);
-         si.set_output(Output_Hub);
+         bool think = false; // ignored
+         bool ponder = false;
+         bool analyze = false;
 
-         search_id(bd);
-         move_t mv = G_Search.move();
-         move_t ponder = G_Search.ponder();
+         while (!scan.eos()) {
 
-         if (ponder == Move_None) {
-            board_do_move(bd, mv);
-            ponder = ponder_move(bd);
+            hub::Pair p = scan.get_pair();
+
+            if (false) {
+            } else if (p.first == "think") {
+               think = true;
+            } else if (p.first == "ponder") {
+               ponder = true;
+            } else if (p.first == "analyze") {
+               analyze = true;
+            }
          }
 
-         std::cout << "move";
-         std::cout << " " << move_to_hub(mv);
-         if (ponder != Move_None) std::cout << " " << move_to_hub(ponder);
-         std::cout << std::endl;
+         si.move = !analyze;
+         si.book = !analyze;
+         si.input = true;
+         si.output = Output_Hub;
+         si.ponder = ponder;
+
+         Search_Output so;
+         search(so, game.node(), si);
+
+         Move move = so.move;
+         Move answer = so.answer;
+
+         if (move == move::None) {
+            move = quick_move(game.node());
+         }
+
+         if (move != move::None && answer == move::None) {
+            Node new_node = game.node().succ(move);
+            answer = quick_move(new_node);
+         }
+
+         std::string line = "done";
+         if (move   != move::None) hub::add_pair(line, "move",   move::to_hub(move));
+         if (answer != move::None) hub::add_pair(line, "ponder", move::to_hub(answer));
+         hub::write(line);
+
+         si.init(); // reset level
 
       } else if (command == "hub") {
 
-         std::cout << "name Scan 2.0" << std::endl;
-         std::cout << "author Fabien Letouzey" << std::endl;
-         std::cout << "country France" << std::endl;
-         std::cout << "wait" << std::endl;
+         std::string line = "id";
+         hub::add_pair(line, "name", Engine_Name);
+         hub::add_pair(line, "version", Engine_Version);
+         hub::add_pair(line, "author", "Fabien Letouzey");
+         hub::add_pair(line, "country", "France");
+         hub::write(line);
+
+         line = "param";
+         hub::add_pair(line, "name", "variant");
+         hub::add_pair(line, "value", var::get("variant"));
+         hub::add_pair(line, "type", "enum");
+         hub::add_pair(line, "values", "normal killer bt");
+         hub::write(line);
+
+         line = "param";
+         hub::add_pair(line, "name", "book");
+         hub::add_pair(line, "value", var::get("book"));
+         hub::add_pair(line, "type", "bool");
+         hub::write(line);
+
+         line = "param";
+         hub::add_pair(line, "name", "book-ply");
+         hub::add_pair(line, "value", var::get("book-ply"));
+         hub::add_pair(line, "type", "int");
+         hub::add_pair(line, "min", "0");
+         hub::add_pair(line, "max", "20");
+         hub::write(line);
+
+         line = "param";
+         hub::add_pair(line, "name", "book-margin");
+         hub::add_pair(line, "value", var::get("book-margin"));
+         hub::add_pair(line, "type", "int");
+         hub::add_pair(line, "min", "0");
+         hub::add_pair(line, "max", "20");
+         hub::write(line);
+
+         line = "param";
+         hub::add_pair(line, "name", "ponder");
+         hub::add_pair(line, "value", var::get("ponder"));
+         hub::add_pair(line, "type", "bool");
+         hub::write(line);
+
+         line = "param";
+         hub::add_pair(line, "name", "threads");
+         hub::add_pair(line, "value", var::get("threads"));
+         hub::add_pair(line, "type", "int");
+         hub::add_pair(line, "min", "1");
+         hub::add_pair(line, "max", "16");
+         hub::write(line);
+
+         line = "param";
+         hub::add_pair(line, "name", "tt-size");
+         hub::add_pair(line, "value", var::get("tt-size"));
+         hub::add_pair(line, "type", "int");
+         hub::add_pair(line, "min", "16");
+         hub::add_pair(line, "max", "30");
+         hub::write(line);
+
+         line = "param";
+         hub::add_pair(line, "name", "bb-size");
+         hub::add_pair(line, "value", var::get("bb-size"));
+         hub::add_pair(line, "type", "int");
+         hub::add_pair(line, "min", "0");
+         hub::add_pair(line, "max", "8");
+         hub::write(line);
+
+         hub::write("wait");
 
       } else if (command == "init") {
 
-         var::update();
+         init_low();
 
-         eval_init();
-         search_init();
-         if (var::Book) book::init();
-         if (var::BB) bb::init();
-
-         std::cout << "ready" << std::endl;
+         hub::write("ready");
 
       } else if (command == "level") {
 
-         std::string arg;
+         int depth = -1;
+         double move_time = -1.0;
 
-         ss >> arg;
-         int moves = ml::stoi(arg);
+         bool smart = false;
+         int moves = 0;
+         double game_time = 30.0;
+         double inc = 0.0;
 
-         ss >> arg;
-         double time = double(ml::stoi(arg)) / 1000.0;
+         bool infinite = false; // ignored
+         bool ponder = false; // ignored
 
-         ss >> arg;
-         double inc = double(ml::stoi(arg)) / 1000.0;
+         while (!scan.eos()) {
 
-         si.set_time(moves, time, inc);
+            hub::Pair p = scan.get_pair();
 
-      } else if (command == "move") {
-
-         std::string arg;
-         ss >> arg;
-
-         try {
-
-            move_t mv = move_from_hub(arg);
-
-            if (!move_is_legal(mv, bd)) {
-               std::cout << "error illegal move" << std::endl;
-            } else {
-               board_do_move(bd, mv);
+            if (false) {
+            } else if (p.first == "depth") {
+               depth = std::stoi(p.second);
+            } else if (p.first == "move-time") {
+               move_time = std::stod(p.second);
+            } else if (p.first == "moves") {
+               smart = true;
+               moves = std::stoi(p.second);
+            } else if (p.first == "time") {
+               smart = true;
+               game_time = std::stod(p.second);
+            } else if (p.first == "inc") {
+               smart = true;
+               inc = std::stod(p.second);
+            } else if (p.first == "infinite") {
+               infinite = true;
+            } else if (p.first == "ponder") {
+               ponder = true;
             }
-
-         } catch (const Bad_Input &) {
-
-            std::cout << "error bad move" << std::endl;
          }
 
-      } else if (command == "new") {
+         if (depth >= 0) si.depth = Depth(depth);
+         if (move_time >= 0.0) si.set_time(move_time);
 
-         search_new_game();
+         if (smart) si.set_time(moves, game_time, inc);
+
+      } else if (command == "new-game") {
+
+         tt::G_TT.clear();
 
       } else if (command == "ping") {
 
-         std::cout << "pong" << std::endl;
-
-      } else if (command == "ponder") {
-
-         si.set_unique(true);
-         si.set_book(true);
-         si.set_input(true);
-         si.set_output(Output_Hub);
-         si.set_ponder(true); // ###
-
-         search_id(bd);
-         move_t mv = G_Search.move();
-         move_t ponder = G_Search.ponder();
-
-         if (ponder == Move_None) {
-            board_do_move(bd, mv);
-            ponder = ponder_move(bd);
-         }
-
-         std::cout << "move";
-         std::cout << " " << move_to_hub(mv);
-         if (ponder != Move_None) std::cout << " " << move_to_hub(ponder);
-         std::cout << std::endl;
+         hub::write("pong");
 
       } else if (command == "ponder-hit") {
 
@@ -271,47 +315,97 @@ static void hub_loop() {
 
       } else if (command == "pos") {
 
-         std::string arg;
-         ss >> arg;
+         std::string pos = Start_Hub;
+         std::string moves;
 
-         try {
-            board_from_hub(bd, arg);
-         } catch (const Bad_Input &) {
-            std::cout << "error bad position" << std::endl;
+         while (!scan.eos()) {
+
+            hub::Pair p = scan.get_pair();
+
+            if (false) {
+            } else if (p.first == "start") {
+               pos = Start_Hub;
+            } else if (p.first == "pos") {
+               pos = p.second;
+            } else if (p.first == "moves") {
+               moves = p.second;
+            }
          }
 
-         si.init();
+         // position
+
+         try {
+            game.init(pos_from_hub(pos));
+         } catch (const Bad_Input &) {
+            hub::error("bad position");
+            continue;
+         }
+
+         // moves
+
+         std::stringstream ss(moves);
+
+         std::string arg;
+
+         while (ss >> arg) {
+
+            try {
+
+               Move mv = move::from_hub(arg);
+
+               if (!move::is_legal(mv, game.pos())) {
+                  hub::error("illegal move");
+                  break;
+               } else {
+                  game.add_move(mv);
+               }
+
+            } catch (const Bad_Input &) {
+
+               hub::error("bad move");
+               break;
+            }
+         }
+
+         si.init(); // reset level
 
       } else if (command == "quit") {
 
          std::exit(EXIT_SUCCESS);
 
-      } else if (command == "set") {
+      } else if (command == "set-param") {
 
          std::string name;
-         ss >> name;
-
          std::string value;
-         ss >> value;
+
+         while (!scan.eos()) {
+
+            hub::Pair p = scan.get_pair();
+
+            if (false) {
+            } else if (p.first == "name") {
+               name = p.second;
+            } else if (p.first == "value") {
+               value = p.second;
+            }
+         }
+
+         if (name == "") {
+            hub::error("missing name");
+            continue;
+         }
 
          var::set(name, value);
-
-      } else if (command == "start") {
-
-         bd.init();
-         si.init();
+         var::update();
 
       } else if (command == "stop") {
 
          // no-op (handled during search)
 
-      } else if (command == "time") {
+      } else { // unknown command
 
-         std::string arg;
-         ss >> arg;
-
-         double time = double(ml::stoi(arg)) / 1000.0;
-         si.set_time(time);
+         hub::error("bad command");
+         continue;
       }
    }
 }
@@ -321,47 +415,44 @@ void Terminal::loop() {
    p_computer[White] = false;
    p_computer[Black] = true;
 
-   p_depth = 99;
-   p_time = 10.0;
+   p_depth = Depth_Max;
+   p_time = Time;
 
    Game & game = p_game;
-   game.clear();
-
-   const Board & bd = game.board();
 
    new_game();
 
    while (true) {
 
-      bool computer = p_computer[bd.turn()];
+      bool computer = p_computer[game.turn()];
 
-      move_t mv;
+      Move mv;
 
-      if (computer && !p_game.is_end(false)) {
+      if (computer && !p_game.is_end()) {
 
-         Search_Info & si = G_Search_Info;
-
-         si.init();
-         si.set_unique(true);
-         si.set_book(true);
-         si.set_depth(p_depth);
+         Search_Input si;
+         si.move = true;
+         si.book = true;
+         si.depth = p_depth;
          si.set_time(p_time);
-         si.set_input(true);
-         si.set_output(Output_Terminal);
+         si.input = true;
+         si.output = Output_Terminal;
 
-         search_id(bd);
-         mv = G_Search.move();
+         Search_Output so;
+         search(so, game.node(), si);
+
+         mv = so.move;
 
       } else {
 
          mv = user_move();
-         if (mv == Move_None) continue; // assume command
+         if (mv == move::None) continue; // assume command
       }
 
-      std::string move_string = move_to_string(mv, bd);
+      std::string move_string = move::to_string(mv, game.pos());
 
       game.add_move(mv);
-      board_disp(bd);
+      pos::disp(game.pos());
 
       if (computer) {
          std::cout << "I play " << move_string << std::endl;
@@ -370,16 +461,12 @@ void Terminal::loop() {
    }
 }
 
-move_t Terminal::user_move() {
-
-   const Board & bd = p_game.board();
+Move Terminal::user_move() {
 
    std::cout << "> " << std::flush;
 
    std::string line;
-   if (!get_line(line)) { // EOF
-      std::exit(EXIT_SUCCESS);
-   }
+   if (!get_line(line)) std::exit(EXIT_SUCCESS); // EOF
 
    std::cout << std::endl;
 
@@ -390,10 +477,10 @@ move_t Terminal::user_move() {
 
    if (false) {
 
-   } else if (command == "") { // forced move?
+   } else if (command == "" && !p_game.is_end()) { // forced move?
 
       List list;
-      gen_moves(list, bd);
+      gen_moves(list, p_game.pos());
       if (list.size() == 1) return list.move(0);
 
    } else if (command == "0") {
@@ -403,8 +490,8 @@ move_t Terminal::user_move() {
 
    } else if (command == "1") {
 
-      p_computer[bd.turn()] = false;
-      p_computer[side_opp(bd.turn())] = true;
+      p_computer[p_game.turn()] = false;
+      p_computer[side_opp(p_game.turn())] = true;
 
    } else if (command == "2") {
 
@@ -413,31 +500,44 @@ move_t Terminal::user_move() {
 
    } else if (command == "b") {
 
-      board_disp(bd);
+      pos::disp(p_game.pos());
 
    } else if (command == "depth") {
 
       std::string arg;
       ss >> arg;
 
-      p_depth = ml::stoi(arg);
+      p_depth = Depth(std::stoi(arg));
 
    } else if (command == "fen") {
 
       std::string arg;
       ss >> arg;
 
-      try {
-         new_game(arg);
-      } catch (const Bad_Input &) {
-         std::cout << "bad FEN" << std::endl;
+      if (arg == "") {
+
+         std::cout << pos_fen(p_game.pos()) << std::endl;
          std::cout << std::endl;
+
+      } else {
+
+         try {
+            new_game(pos_from_fen(arg));
+         } catch (const Bad_Input &) {
+            std::cout << "bad FEN" << std::endl;
+            std::cout << std::endl;
+         }
       }
 
    } else if (command == "g") {
 
-      p_computer[bd.turn()] = true;
-      p_computer[side_opp(bd.turn())] = false;
+      p_computer[p_game.turn()] = true;
+      p_computer[side_opp(p_game.turn())] = false;
+
+   } else if (command == "game") {
+
+      disp_game(p_game);
+      std::cout << std::endl;
 
    } else if (command == "h") {
 
@@ -456,7 +556,8 @@ move_t Terminal::user_move() {
       std::cout << std::endl;
 
       std::cout << "depth <n>" << std::endl;
-      std::cout << "fen <s>" << std::endl;
+      std::cout << "fen [<FEN>]" << std::endl;
+      std::cout << "game" << std::endl;
       std::cout << "time <n>" << std::endl;
       std::cout << std::endl;
 
@@ -470,7 +571,7 @@ move_t Terminal::user_move() {
 
    } else if (command == "r") {
 
-      go_to(p_game.pos() + 1);
+      go_to(p_game.ply() + 1);
 
    } else if (command == "ra") {
 
@@ -481,26 +582,26 @@ move_t Terminal::user_move() {
       std::string arg;
       ss >> arg;
 
-      p_time = ml::stof(arg);
+      p_time = std::stod(arg);
 
    } else if (command == "u") {
 
-      go_to(p_game.pos() - 1);
+      go_to(p_game.ply() - 1);
 
    } else if (command == "ua") {
 
       go_to(0);
 
-   } else {
+   } else if (!p_game.is_end()) {
 
       try {
 
-         move_t mv = move_from_string(command, bd);
+         Move mv = move::from_string(command, p_game.pos());
 
-         if (!move_is_legal(mv, bd)) {
+         if (!move::is_legal(mv, p_game.pos())) {
             std::cout << "illegal move" << std::endl;
             std::cout << std::endl;
-            return Move_None;
+            return move::None;
          } else {
             return mv;
          }
@@ -512,39 +613,73 @@ move_t Terminal::user_move() {
       }
    }
 
-   return Move_None;
+   return move::None;
 }
 
-void Terminal::new_game(const std::string & fen) {
+void Terminal::new_game(const Pos & pos) {
 
-   const Board & bd = p_game.board();
-   bool opp = p_computer[side_opp(bd.turn())];
+   bool opp = p_computer[side_opp(p_game.turn())];
 
-   p_game.init(fen);
-   board_disp(bd);
+   p_game.init(pos);
+   pos::disp(p_game.pos());
 
-   int turn = bd.turn();
-   p_computer[turn] = false;
-   p_computer[side_opp(turn)] = opp;
+   p_computer[p_game.turn()] = false;
+   p_computer[side_opp(p_game.turn())] = opp;
 
-   search_new_game();
+   tt::G_TT.clear();
 }
 
-void Terminal::go_to(int pos) {
+void Terminal::go_to(int ply) {
 
-   if (pos >= 0 && pos <= p_game.size() && pos != p_game.pos()) {
+   if (ply >= 0 && ply <= p_game.size() && ply != p_game.ply()) {
 
-      const Board & bd = p_game.board();
-      bool opp = p_computer[side_opp(bd.turn())];
+      bool opp = p_computer[side_opp(p_game.turn())];
 
-      p_game.go_to(pos);
-      board_disp(bd);
+      p_game.go_to(ply);
+      pos::disp(p_game.pos());
 
-      int turn = bd.turn();
-      p_computer[turn] = false;
-      p_computer[side_opp(turn)] = opp;
+      p_computer[p_game.turn()] = false;
+      p_computer[side_opp(p_game.turn())] = opp;
    }
 }
 
-// end of main.cpp
+static void disp_game(const Game & game) {
+
+   Pos pos = game.start_pos();
+
+   for (int i = 0; i < game.ply(); i++) {
+
+      Move mv = game.move(i);
+
+      if (i != 0) std::cout << " ";
+      std::cout << move::to_string(mv, pos);
+
+      pos = pos.succ(mv);
+   }
+
+   std::cout << std::endl;
+}
+
+static void init_high() {
+
+   std::cout << std::endl;
+
+   init_low();
+
+   std::cout << "done" << std::endl;
+   std::cout << std::endl;
+}
+
+static void init_low() {
+
+   var::update();
+
+   if (var::Book) book::init();
+   if (var::BB) bb::init();
+
+   std::string file_name = std::string("data/eval") + var::variant("", "_killer", "_bt");
+   eval_init(file_name);
+
+   tt::G_TT.set_size(var::TT_Size);
+}
 

@@ -1,6 +1,4 @@
 
-// util.cpp
-
 // includes
 
 #include <cctype>
@@ -9,7 +7,7 @@
 #include <vector>
 
 #include "libmy.hpp"
-#include "util.h"
+#include "util.hpp"
 
 // functions
 
@@ -21,9 +19,8 @@ void load_file(std::vector<uint8> & table, std::istream & file) {
    file.read((char *) &table[0], size);
 }
 
-Scanner_Number::Scanner_Number(const std::string & string) {
-
-   p_string = string;
+Scanner_Number::Scanner_Number(const std::string & s) {
+   p_string = s;
    p_pos = 0;
 }
 
@@ -31,7 +28,7 @@ std::string Scanner_Number::get_token() {
 
    if (eos()) return "";
 
-   std::string token = "";
+   std::string token;
 
    char c = get_char();
    token += c;
@@ -54,19 +51,20 @@ std::string Scanner_Number::get_token() {
    return token;
 }
 
-bool Scanner_Number::eos() const {
+std::string Scanner_Number::string() const {
+   return p_string;
+}
 
+bool Scanner_Number::eos() const {
    return p_pos >= int(p_string.size());
 }
 
 char Scanner_Number::get_char() {
-
    assert(!eos());
    return p_string[p_pos++];
 }
 
 void Scanner_Number::unget_char() {
-
    assert(p_pos > 0);
    p_pos--;
 }
@@ -81,6 +79,4 @@ bool string_is_nat(const std::string & s) {
 
    return true;
 }
-
-// end of util.cpp
 

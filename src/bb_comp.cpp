@@ -1,6 +1,4 @@
 
-// bb_comp.cpp
-
 // includes
 
 #include <cstdlib>
@@ -10,30 +8,25 @@
 #include <string>
 #include <vector>
 
-#include "bb_base.h"
-#include "bb_comp.h"
+#include "bb_comp.hpp"
+#include "common.hpp"
 #include "libmy.hpp"
-#include "util.h"
+#include "util.hpp"
 
 namespace bb {
 
 // constants
 
-static const int RLE_Size = 85; // 255 / 3
+const int RLE_Size { 255 / 3 };
 
-static const int Block_Size = 1 << 8;
+const int Block_Size { 1 << 8 };
 
 // variables
 
-static int RLE[RLE_Size];
+static int RLE[RLE_Size + 1];
 
 static int Code_Value[256];
 static int Code_Length[256];
-
-// prototypes
-
-static int code_value  (int byte);
-static int code_length (int byte);
 
 // functions
 
@@ -44,24 +37,12 @@ void comp_init() {
    }
 
    for (int byte = 0; byte < 256; byte++) {
-      Code_Value[byte]  = code_value(byte);
-      Code_Length[byte] = code_length(byte);
+      Code_Value[byte]  = byte % 3;
+      Code_Length[byte] = RLE[byte / 3];
    }
 }
 
-static int code_value(int byte) {
-
-   assert(byte >= 0 && byte < 256);
-   return byte % 3;
-}
-
-static int code_length(int byte) {
-
-   assert(byte >= 0 && byte < 256);
-   return RLE[byte / 3];
-}
-
-void Index::load(const std::string & file_name, index_t size) {
+void Index_::load(const std::string & file_name, Index size) {
 
    std::ifstream file(file_name.c_str(), std::ios::binary);
 
@@ -75,17 +56,17 @@ void Index::load(const std::string & file_name, index_t size) {
 
    // create index table for on-line decompression
 
-   index_t table_size = index_t(p_table.size());
-   index_t index_size = (table_size + Block_Size - 1) / Block_Size;
+   Index table_size = Index(p_table.size());
+   Index index_size = (table_size + Block_Size - 1) / Block_Size;
 
    p_index.clear();
    p_index.reserve(index_size + 1); // sentinel for debug
 
-   index_t pos = 0;
+   Index pos = 0;
 
-   for (index_t i = 0; i < table_size; i++) {
+   for (Index i = 0; i < table_size; i++) {
       if (i % Block_Size == 0) p_index.push_back(pos);
-      pos += code_length(p_table[i]);
+      pos += Code_Length[p_table[i]];
    }
 
    if (pos != p_size) {
@@ -93,18 +74,18 @@ void Index::load(const std::string & file_name, index_t size) {
       std::exit(EXIT_FAILURE);
    }
 
-   assert(index_t(p_index.size()) == index_size);
+   assert(Index(p_index.size()) == index_size);
    p_index.push_back(p_size); // sentinel for debug
 }
 
-int Index::get(index_t pos) const {
+int Index_::get(Index pos) const {
 
    assert(pos < p_size);
 
    // find the compressed block using the index table
 
    int low = 0;
-   int high = int(p_index.size()) - 1;
+   int high = p_index.size() - 1;
    assert(low <= high);
 
    while (low < high) {
@@ -130,17 +111,15 @@ int Index::get(index_t pos) const {
    assert(pos >= p_index[low]);
    pos -= p_index[low];
 
-   for (index_t i = low * Block_Size; true; i++) {
+   for (Index i = low * Block_Size; true; i++) {
 
       int byte = p_table[i];
 
       int len = Code_Length[byte];
-      if (pos < index_t(len)) return Code_Value[byte];
+      if (pos < Index(len)) return Code_Value[byte];
       pos -= len;
    }
 }
 
 }
-
-// end of bb_comp.cpp
 

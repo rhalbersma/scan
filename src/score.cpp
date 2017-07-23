@@ -1,67 +1,64 @@
 
-// score.cpp
-
 // includes
 
+#include "common.hpp"
 #include "libmy.hpp"
-#include "score.h"
-#include "search.h" // for Ply_Max
+#include "score.hpp"
+#include "search.hpp" // for Ply_Max
 
 namespace score {
 
 // functions
 
-int loss(int ply) {
+inline bool is_win  (Score sc) { return sc > +Eval_Inf; }
+inline bool is_loss (Score sc) { return sc < -Eval_Inf; }
+inline bool is_eval (Score sc) { return sc >= -Eval_Inf && sc <= +Eval_Inf; }
 
-   assert(ply >= 0 && ply <= Ply_Max + 2);
+Score to_tt(Score sc, Ply ply) {
 
-   return -Inf + ply;
-}
-
-int to_trans(int sc, int ply) {
-
-   assert(sc >= -Inf && sc <= +Inf);
+   assert(is_ok(sc));
    assert(ply >= 0 && ply <= Ply_Max);
 
-   if (sc > +Eval_Inf) {
-      sc += ply;
-      assert(sc > +Eval_Inf && sc <= +Inf);
-   } else if (sc < -Eval_Inf) {
-      sc -= ply;
-      assert(sc >= -Inf && sc < -Eval_Inf);
+   if (is_win(sc)) {
+      sc += Score(ply);
+      assert(sc <= +Inf);
+   } else if (is_loss(sc)) {
+      sc -= Score(ply);
+      assert(sc >= -Inf);
    }
 
    return sc;
 }
 
-int from_trans(int sc, int ply) {
+Score from_tt(Score sc, Ply ply) {
 
-   assert(sc >= -Inf && sc <= +Inf);
+   assert(is_ok(sc));
    assert(ply >= 0 && ply <= Ply_Max);
 
-   if (sc > +Eval_Inf) {
-      sc -= ply;
-      // assert(sc > +Eval_Inf && sc <= +Inf);
-   } else if (sc < -Eval_Inf) {
-      sc += ply;
-      // assert(sc >= -Inf && sc < -Eval_Inf); // triggers in SMP
+   if (is_win(sc)) {
+      sc -= Score(ply);
+      assert(is_win(sc));
+   } else if (is_loss(sc)) {
+      sc += Score(ply);
+      assert(is_loss(sc));
    }
 
    return sc;
 }
 
-int clamp(int sc) {
+Score clamp(Score sc) {
 
-   if (sc > +Eval_Inf) {
-      return +Eval_Inf;
-   } else if (sc < -Eval_Inf) {
-      return -Eval_Inf;
+   if (is_win(sc)) {
+      sc = +Eval_Inf;
+   } else if (is_loss(sc)) {
+      sc = -Eval_Inf;
    }
 
+   assert(is_eval(sc));
    return sc;
 }
 
-int add(int sc, int inc) {
+Score add_safe(Score sc, Score inc) {
 
    if (is_eval(sc)) {
       return clamp(sc + inc);
@@ -71,6 +68,4 @@ int add(int sc, int inc) {
 }
 
 }
-
-// end of score.cpp
 

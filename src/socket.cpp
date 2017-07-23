@@ -1,6 +1,4 @@
 
-// socket.cpp
-
 // includes
 
 #include <cstdio>
@@ -17,33 +15,37 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <unistd.h>
 
 typedef int SOCKET;
-static const SOCKET INVALID_SOCKET = -1;
+const SOCKET INVALID_SOCKET { -1 };
+void closesocket(int socket) { close(socket); }
 
 #endif
 
 #include "libmy.hpp"
-#include "socket.h"
-#include "var.h"
+#include "socket.hpp"
+#include "var.hpp"
+
+namespace socket_ { // HACK: "socket" creates a conflict on macOS
 
 // constants
 
-static const int Buffer_Size_Max = 256;
+const int Buffer_Size_Max { 4096 };
 
 // variables
 
-static SOCKET Socket;
-static char Buffer[Buffer_Size_Max];
-static int Buffer_Size;
+static SOCKET G_Socket;
+static char G_Buffer[Buffer_Size_Max];
+static int G_Buffer_Size;
 
 // prototypes
 
-static bool socket_has_input ();
+static bool has_input ();
 
 // functions
 
-void socket_init() {
+void init() {
 
 #ifdef _WIN32
 
@@ -56,45 +58,53 @@ void socket_init() {
 
 #endif
 
-   Socket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-   if (Socket == INVALID_SOCKET) {
-      std::perror("socket");
-      std::exit(EXIT_FAILURE);
-   }
-
    struct sockaddr_in sa;
 
    if (var::DXP_Server) {
+
+      SOCKET listen_socket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+      if (listen_socket == INVALID_SOCKET) {
+         std::perror("socket");
+         std::exit(EXIT_FAILURE);
+      }
 
       sa.sin_family = AF_INET;
       sa.sin_addr.s_addr = htonl(INADDR_ANY);
       sa.sin_port = htons(var::DXP_Port);
 
-      if (bind(Socket, (struct sockaddr *) &sa, sizeof(sa)) < 0) {
+      if (bind(listen_socket, (struct sockaddr *) &sa, sizeof(sa)) < 0) {
          std::perror("bind");
          std::exit(EXIT_FAILURE);
       }
 
-      if (listen(Socket, 1) < 0) {
+      if (listen(listen_socket, 1) < 0) {
          std::perror("listen");
          std::exit(EXIT_FAILURE);
       }
 
       std::cout << "waiting for a connection" << std::endl;
 
-      Socket = accept(Socket, NULL, NULL);
-      if (Socket == INVALID_SOCKET) {
+      G_Socket = accept(listen_socket, NULL, NULL);
+      if (G_Socket == INVALID_SOCKET) {
          std::perror("accept");
          std::exit(EXIT_FAILURE);
       }
 
+      closesocket(listen_socket);
+
    } else { // client
+
+      G_Socket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+      if (G_Socket == INVALID_SOCKET) {
+         std::perror("socket");
+         std::exit(EXIT_FAILURE);
+      }
 
       sa.sin_family = AF_INET;
       sa.sin_addr.s_addr = inet_addr(var::DXP_Host.c_str());
       sa.sin_port = htons(var::DXP_Port);
 
-      if (connect(Socket, (struct sockaddr *) &sa, sizeof(sa)) < 0) {
+      if (connect(G_Socket, (struct sockaddr *) &sa, sizeof(sa)) < 0) {
          std::perror("connect");
          std::exit(EXIT_FAILURE);
       }
@@ -103,21 +113,21 @@ void socket_init() {
    std::cout << "connection established" << std::endl;
    std::cout << std::endl;
 
-   Buffer_Size = 0;
+   G_Buffer_Size = 0;
 }
 
-std::string socket_read() {
+std::string read() {
 
    // fill buffer until a NUL byte is read
 
-   while (!socket_has_input()) {
+   while (!has_input()) {
 
-      if (Buffer_Size >= Buffer_Size_Max) {
+      if (G_Buffer_Size >= Buffer_Size_Max) {
          std::cerr << "socket buffer overflow" << std::endl;
          std::exit(EXIT_FAILURE);
       }
 
-      int len = recv(Socket, &Buffer[Buffer_Size], Buffer_Size_Max - Buffer_Size, 0);
+      int len = recv(G_Socket, &G_Buffer[G_Buffer_Size], Buffer_Size_Max - G_Buffer_Size, 0);
 
       if (len < 0) { // error
          std::perror("recv");
@@ -126,8 +136,8 @@ std::string socket_read() {
          std::cerr << "connection closed" << std::endl;
          std::exit(EXIT_SUCCESS);
       } else { // success
-         Buffer_Size += len;
-         assert(Buffer_Size <= Buffer_Size_Max);
+         G_Buffer_Size += len;
+         assert(G_Buffer_Size <= Buffer_Size_Max);
       }
    }
 
@@ -135,11 +145,11 @@ std::string socket_read() {
 
    std::string s;
 
-   int pos = 0;
+   int i = 0;
 
    while (true) {
-      assert(pos < Buffer_Size);
-      char c = Buffer[pos++];
+      assert(i < G_Buffer_Size);
+      char c = G_Buffer[i++];
       if (c == '\0') break;
       s += c;
    }
@@ -148,42 +158,42 @@ std::string socket_read() {
 
    int size = 0;
 
-   while (pos < Buffer_Size) {
-      Buffer[size++] = Buffer[pos++];
+   while (i < G_Buffer_Size) {
+      G_Buffer[size++] = G_Buffer[i++];
    }
 
-   Buffer_Size = size;
+   G_Buffer_Size = size;
 
    return s;
 }
 
-void socket_write(const std::string & s) {
+void write(const std::string & s) {
 
    const char * buffer = s.c_str();
-   int size = int(s.size()) + 1;
+   int size = s.size() + 1;
 
-   for (int pos = 0; pos < size;) {
+   for (int i = 0; i < size;) {
 
-      int len = send(Socket, &buffer[pos], size - pos, 0);
+      int len = send(G_Socket, &buffer[i], size - i, 0);
 
       if (len < 0) { // error
          std::perror("send");
          std::exit(EXIT_FAILURE);
       } else { // success
-         pos += len;
-         assert(pos <= size);
+         i += len;
+         assert(i <= size);
       }
    }
 }
 
-static bool socket_has_input() {
+static bool has_input() {
 
-   for (int pos = 0; pos < Buffer_Size; pos++) {
-      if (Buffer[pos] == '\0') return true;
+   for (int i = 0; i < G_Buffer_Size; i++) {
+      if (G_Buffer[i] == '\0') return true;
    }
 
    return false;
 }
 
-// end of socket.cpp
+}
 

@@ -1,14 +1,14 @@
 
-Scan 2.0 Copyright (C) 2015 Fabien Letouzey.
+Scan 3.0 Copyright (C) 2015-2017 Fabien Letouzey.
 This program is distributed under the GNU General Public License version 3.
 See license.txt for more details.
 
 ---
 
-Today is 2015-07-19.
-Scan is an international (10x10) draughts engine that uses the DamExchange Protocol (DXP) or text mode.  The name "Scan" comes from the scanning in evaluation that "divides" the board into 16 overlapping squares (2-16, 3-17, ..., 35-49) to judge positions.  Enjoy Scan!
+Today is 2017-07-11.
+Scan is an international (10x10) draughts engine that uses the DamExchange Protocol (DXP) or text mode.  The name "Scan" comes from the scanning in evaluation that "divides" the board into 8 overlapping rectangles (2-26, 3-27, ..., 25-49) to judge positions.  Enjoy Scan!
 
-Thanks a lot to Harm Jetten for helping with Windows compatibility and compilation, testing, hosting, etc (you name it, he did it) ...  His engine, Moby Dam, is also new, cross-platform, and open-source!
+Thanks a lot to Harm Jetten for helping with Windows compatibility and compilation, testing, hosting, etc (you name it, he did it) ...  His engine, Moby Dam, is also cross-platform and open-source!
 
 Greetings to other game programmers; Gens una sumus.
 
@@ -18,7 +18,7 @@ Fabien Letouzey (fabien_letouzey@hotmail.com).
 
 Running Scan
 
-In Windows terminology, Scan is a "console application" (no graphics).  Text mode is the default; a DXP mode is also available with a command-line argument: "scan dxp".  Scan needs the configuration file "scan.ini" (described below) and data files in the "data" directory (including bitbases).  Note that bitbases for 5 and 6 pieces require a separate download for installation.
+In Windows terminology, Scan is a "console application" (no graphics).  Text mode is the default; a DXP mode is also available with a command-line argument: "scan dxp".  Scan needs the configuration file "scan.ini" (described below) and data files in the "data" directory (opening book, evaluation weights, and bitbases).  Note that, due to their size,  bitbases require a separate copy (from Scan 2.0) or download for installation.
 
 Most text-mode commands consist of a single letter (lower case):
 
@@ -33,7 +33,9 @@ time <n> -> fixed time limit; 10s by default
 
 And of course you can type a move in standard notation.  Just pressing return can be used for forced moves.
 
-A note about scores.  +/- 18.xx means reaching a winning/losing endgame soon.  +/- 19.xx means reaching the absolute end of the game soon.
+A note about scores.  +/- 89.xx means reaching a winning/losing endgame soon.  +/- 99.xx means reaching the absolute end of the game soon.  Those values differ from Scan 2.0
+
+Scan also has a Hub mode with a new protocol: "scan hub", which is used by the Hub GUI (separate download).  Programmers can use it to control Scan in an automated way; the description of the protocol can be found in "protocol.txt".
 
 ---
 
@@ -41,15 +43,17 @@ Configuration
 
 You can edit the text file "scan.ini" to change settings; you need to re-launch Scan in that case.  Here are the parameters.
 
-book & book-margin: you can (de)activate the opening book here.  book-margin is a randomness factor for the first two moves.  0 = best move, 1 = small randomness, 2 = normal.  Note that equally-good moves are always picked at random, even after the first two moves.
+variant (NEW): selects the rules to apply.  "normal" for international draughts.  However a lot of draws occur with those rules, even with somewhat weaker opponents.  "killer" (Killer draughts) and "bt" (breakthrough draughts: the first player who makes a king wins) are attempts to make the game more interesting at high level.  Scan should be very strong in Killer draughts and the "normal" rules are actually only supported as a legacy feature (sorry for the fans).  By contrast, BT support is experimental and not well tested.  IMPORTANT: changing the rules only makes sense if both players are aware of it (just like chess vs. draughts).
+
+book, book-ply (NEW), book-margin: you can (de)activate the opening book here.  Randomness will only be applied to the first "book-ply" plies (half moves); subsequent moves will always be the best ones.  I used "book-ply = 4" during the Computer Olympiads, and it also covers Scan 2.0's behaviour.  "book-margin" acts as a randomness factor, for example: 0 = best move (for tournaments with pre-selected opening positions), 1 = small randomness (for serious games), 4 = fairly random (for casual games).  Note that equally-good moves are always picked at random, even after the first "book-ply" moves.
 
 threads: how many cores to use for search (SMP).  Avoid hyper-threading (not tested).
 
-tt-size: the number of entries in the transposition table will be 2 ^ tt-size.  Every entry takes 16 bytes so tt-size = 24 corresponds to 256 MiB; that's what I used during the Computer Olympiad.  Every time you increase it by one, the size of the table will double.
+tt-size: the number of entries in the transposition table will be 2 ^ tt-size.  Every entry takes 16 bytes so tt-size = 26 corresponds to 1 GiB; that's what I used during the Computer Olympiad.  Use smaller values for fast games.  Every time you increase it by one, the size of the table will double.
 
-bb-size: use endgame bitbases (win/loss/draw only) of up to bb-size pieces (0 = no bitbases).  If you want maximum strength, use 6.  This will take about 2 GiB of RAM though.  If Scan takes too much time to initialise or too much memory, select 5.  Note that bitbases for 5 and 6 pieces require a separate download for installation.
+bb-size: use endgame bitbases (win/loss/draw only) of up to "bb-size" pieces (0 = no bitbases).  If you want maximum strength, use 6 (7 for BT variant).  This will take about 2 GiB of RAM though.  If Scan takes too much time to initialise or too much memory, select 5.  Note that bitbases require a separate copy (from Scan 2.0) or download for installation into the "data" directory.
 
-The other options are all related to the DamExchange Protocol (DXP).
+The other options are all related to the DamExchange Protocol (DXP), and are the same as in Scan 2.0
 
 dxp-server: for two programs to communicate, one has to be the server and the other one the client ("caller" to use a phone analogy).
 
@@ -65,7 +69,7 @@ dxp-board & dxp-search: whether Scan should display the board and/or search info
 
 Compilation
 
-The source code uses C++11 and should be mostly cross-platform.  I provided the Clang Makefile I use on Mac; it is compatible with GCC with the possible exception of -flto (link-time optimisation).  You might need to run "make" twice.  The source code is also known to work with Visual Studio.
+The source code uses C++11 and should be mostly cross-platform.  I provided the Clang Makefile I use on Mac; it is compatible with GCC with the possible exception of -flto (link-time optimisation).  The source code is also known to work with Visual Studio.
 
 ---
 
@@ -81,4 +85,13 @@ History
 - added game phase in evaluation
 - added bitboard move generation
 - added DXP
+
+2017-07-11, version 3.0
+- added Killer and BT variants
+- improved evaluation
+- improved QS (opponent-can-capture positions)
+- improved speed
+- improved bitbase probing (keep searching for an exact win after a BB win)
+- improved Hub protocol (see protocol.txt)
+- cleaned up code (stricter types and immutable position classes)
 

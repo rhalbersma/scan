@@ -9,7 +9,9 @@
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <random>
 #include <sstream>
 #include <string>
 
@@ -22,29 +24,24 @@ namespace ml {
 // math
 
 void rand_init() {
-
-   std::srand(std::time(NULL));
+   std::srand(std::time(nullptr));
 }
 
 double rand_float() {
-
    return double(std::rand()) / (double(RAND_MAX) + 1.0);
 }
 
-int rand_int(int n) {
-
-   assert(n > 0);
-   return int(floor(rand_float() * double(n))); // TODO: remove "floor"?
+uint64 rand_int_64() {
+   static std::mt19937_64 gen;
+   return gen();
 }
 
 bool rand_bool(double p) {
-
    assert(p >= 0.0 && p <= 1.0);
    return rand_float() < p;
 }
 
 int round(double x) {
-
    return int(floor(x + 0.5));
 }
 
@@ -64,13 +61,11 @@ int div(int a, int b) {
 }
 
 int div_round(int a, int b) {
-
    assert(b > 0);
    return div(a + b / 2, b);
 }
 
 bool is_power_2(int64 n) {
-
    assert(n >= 0);
    return (n & (n - 1)) == 0 && n != 0;
 }
@@ -115,33 +110,9 @@ uint64 get_bytes(std::istream & stream, int size) {
 
 // string
 
-int stoi(const std::string & s) {
-
-   std::stringstream ss(s);
-   int n;
-   ss >> n;
-   return n;   
-}
-
-double stof(const std::string & s) {
-
-   std::stringstream ss(s);
-   double x;
-   ss >> x;
-   return x;   
-}
-
-std::string itos(int n) {
-
+std::string ftos(double x, int decimals) {
    std::stringstream ss;
-   ss << n;
-   return ss.str();
-}
-
-std::string ftos(double x) {
-
-   std::stringstream ss;
-   ss << x;
+   ss << std::fixed << std::setprecision(decimals) << x;
    return ss.str();
 }
 
@@ -165,6 +136,4 @@ std::string trim(const std::string & s) {
 }
 
 }
-
-// end of libmy.cpp
 

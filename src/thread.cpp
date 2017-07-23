@@ -1,29 +1,33 @@
 
-// thread.cpp
-
 // includes
 
-#include "libmy.hpp"
-#include "thread.h"
+#include <iostream>
+#include <string>
 
-// classes
+#include "libmy.hpp"
+#include "thread.hpp"
+
+// types
 
 class Input : public Waitable {
+
+private :
 
    std::atomic<bool> p_has_input;
    bool p_eof;
    std::string p_line;
 
-public:
+public :
 
    Input ();
 
-   bool has_input () const;
    bool peek_line (std::string & line);
    bool get_line  (std::string & line);
 
    void set_eof  ();
    void set_line (std::string & line);
+
+   bool has_input () const { return p_has_input; }
 };
 
 // variables
@@ -38,7 +42,6 @@ static void input_program (Input * input);
 // functions
 
 void listen_input() {
-
    G_Thread = std::thread(input_program, &G_Input);
    G_Thread.detach();
 }
@@ -55,27 +58,20 @@ static void input_program(Input * input) {
 }
 
 bool has_input() {
-
    return G_Input.has_input();
 }
 
 bool peek_line(std::string & line) {
-
    return G_Input.peek_line(line);
 }
 
 bool get_line(std::string & line) {
-
    return G_Input.get_line(line);
 }
 
 Input::Input() {
    p_has_input = false;
    p_eof = false;
-}
-
-bool Input::has_input() const {
-   return p_has_input;
 }
 
 bool Input::peek_line(std::string & line) {
@@ -142,6 +138,4 @@ void Input::set_line(std::string & line) {
 
    unlock();
 }
-
-// end of thread.cpp
 
