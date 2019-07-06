@@ -9,31 +9,20 @@
 #include "common.hpp"
 #include "libmy.hpp"
 
-namespace tt {
-
 // types
 
-enum class Flags;
-
-inline Flags operator | (Flags f0, Flags f1) { return Flags(int(f0) | int(f1)); }
-
-inline void  operator |= (Flags & f0, Flags f1) { f0 = f0 | f1; }
-
-// constants
-
-const Flags Flags_None  { Flags(0) };
-const Flags Flags_Lower { Flags(1 << 0) };
-const Flags Flags_Upper { Flags(1 << 1) };
-const Flags Flags_Exact { Flags_Lower | Flags_Upper };
-const Flags Flags_Mask  { Flags_Lower | Flags_Upper };
-
-// types
+enum class Flag : int {
+   None  = 0,
+   Upper = 1 << 0,
+   Lower = 1 << 1,
+   Exact = Upper | Lower,
+};
 
 class TT {
 
-private :
+private:
 
-   static const int Date_Size { 16 };
+   static const int Date_Size {16};
 
    struct Entry { // 16 bytes
       uint32 lock;
@@ -42,44 +31,46 @@ private :
       int16 score;
       uint8 depth;
       uint8 date;
-      uint8 flags;
+      uint8 flag;
       uint8 pad_1; // #
    };
 
-   std::vector<Entry> p_table;
+   std::vector<Entry> m_table;
 
-   int p_size;
-   int p_mask;
-   int p_date;
-   int p_age[Date_Size];
+   int m_size {0};
+   int m_mask {0};
+   int m_date {0};
+   int m_age[Date_Size] {};
 
-public :
+public:
 
    void set_size (int size);
 
    void clear    ();
    void inc_date ();
 
-   void store (Key key, Move_Index move, Depth depth, Flags flags, Score score);
-   bool probe (Key key, Move_Index & move, Depth & depth, Flags & flags, Score & score);
+   void store (Key key, Move_Index move, Score score, Flag flag, Depth depth);
+   bool probe (Key key, Move_Index & move, Score & score, Flag & flag, Depth & depth);
 
-private :
+private:
 
    void set_date (int date);
-   int  age      (int date) const;
 };
 
 // variables
 
 extern TT G_TT;
 
+// operators
+
+inline Flag operator |  (Flag   f0, Flag f1) { return Flag(int(f0) | int(f1)); }
+inline void operator |= (Flag & f0, Flag f1) { f0 = f0 | f1; }
+
 // functions
 
-inline bool is_lower (Flags flags) { return (int(flags) & int(Flags_Lower)) != 0; }
-inline bool is_upper (Flags flags) { return (int(flags) & int(Flags_Upper)) != 0; }
-inline bool is_exact (Flags flags) { return flags == Flags_Exact; }
-
-}
+inline bool is_lower (Flag flag) { return (int(flag) & int(Flag::Lower)) != 0; }
+inline bool is_upper (Flag flag) { return (int(flag) & int(Flag::Upper)) != 0; }
+inline bool is_exact (Flag flag) { return flag == Flag::Exact; }
 
 #endif // !defined TT_HPP
 

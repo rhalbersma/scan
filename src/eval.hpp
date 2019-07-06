@@ -4,8 +4,6 @@
 
 // includes
 
-#include <string>
-
 #include "common.hpp"
 #include "libmy.hpp"
 
@@ -13,8 +11,9 @@ class Pos;
 
 // functions
 
-void  eval_init (const std::string & file_name);
-Score eval      (const Pos & pos, Side sd);
+void eval_init ();
+
+Score eval (const Pos & pos);
 
 #endif // !defined EVAL_HPP
 

@@ -20,7 +20,7 @@ Key key (const Pos & pos);
 inline int    index (Key key, int mask) { return uint64(key) & mask; }
 inline uint32 lock  (Key key)           { return uint64(key) >> 32; }
 
-}
+} // namespace hash
 
 #endif // !defined HASH_HPP
 

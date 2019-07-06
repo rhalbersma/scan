@@ -17,26 +17,26 @@
 
 class Lockable {
 
-protected : // HACK for Waitable::wait()
+protected: // HACK for Waitable::wait()
 
-   mutable std::mutex p_mutex;
+   mutable std::mutex m_mutex;
 
-public :
+public:
 
-   void lock   () const { p_mutex.lock(); }
-   void unlock () const { p_mutex.unlock(); }
+   void lock   () const { m_mutex.lock(); }
+   void unlock () const { m_mutex.unlock(); }
 };
 
 class Waitable : public Lockable {
 
-private :
+private:
 
-   std::condition_variable_any p_cond;
+   std::condition_variable_any m_cond;
 
-public :
+public:
 
-   void wait   () { p_cond.wait(p_mutex); } // HACK: direct access
-   void signal () { p_cond.notify_one(); }
+   void wait   () { m_cond.wait(m_mutex); } // HACK: direct access
+   void signal () { m_cond.notify_one(); }
 };
 
 // functions

@@ -16,7 +16,7 @@ namespace book {
 void init  ();
 bool probe (const Pos & pos, Score margin, Move & move, Score & score);
 
-}
+} // namespace book
 
 #endif // !defined BOOK_HPP
 

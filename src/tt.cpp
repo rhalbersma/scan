@@ -1,22 +1,18 @@
 
 // includes
 
-#include <cstdio>
-#include <cstring>
-#include <vector>
+#include <algorithm>
+#include <cmath>
 
 #include "common.hpp"
 #include "hash.hpp"
 #include "libmy.hpp"
-#include "move.hpp"
 #include "score.hpp"
 #include "tt.hpp"
 
-namespace tt {
-
 // constants
 
-const int Cluster_Size { 4 };
+const int Cluster_Size {4};
 
 // variables
 
@@ -26,66 +22,57 @@ TT G_TT;
 
 void TT::set_size(int size) {
 
-   assert(ml::is_power_2(size));
+   m_size = size;
+   m_mask = (size - 1) & -Cluster_Size;
 
-   p_size = size;
-   p_mask = (size - 1) & -Cluster_Size;
-
-   p_table.resize(p_size);
+   m_table.resize(m_size);
 
    clear();
 }
 
 void TT::clear() {
 
-   assert(sizeof(Entry) == 16);
+   static_assert(sizeof(Entry) == 16, "");
 
-   Entry entry { 0, 0, 0, 0, 0, 0, 0, 0 };
+   Entry entry {};
+   entry.move = Move_Index_None;
+   entry.score = score::None;
+   entry.flag = int(Flag::None);
 
-   for (int i = 0; i < p_size; i++) {
-      p_table[i] = entry;
-   }
+   std::fill(m_table.begin(), m_table.end(), entry);
 
    set_date(0);
 }
 
 void TT::inc_date() {
-   set_date((p_date + 1) % Date_Size);
+   set_date((m_date + 1) % Date_Size);
 }
 
 void TT::set_date(int date) {
 
    assert(date >= 0 && date < Date_Size);
 
-   p_date = date;
+   m_date = date;
 
    for (date = 0; date < Date_Size; date++) {
-      p_age[date] = age(date);
+
+      int age = m_date - date;
+      if (age < 0) age += Date_Size;
+
+      m_age[date] = age;
    }
 }
 
-int TT::age(int date) const {
+void TT::store(Key key, Move_Index move, Score score, Flag flag, Depth depth) {
 
-   assert(date >= 0 && date < Date_Size);
-
-   int age = p_date - date;
-   if (age < 0) age += Date_Size;
-
-   assert(age >= 0 && age < Date_Size);
-   return age;
-}
-
-void TT::store(Key key, Move_Index move, Depth depth, Flags flags, Score score) {
-
-   // assert(move >= 0 && move < (1 << 16));
-   assert(depth >= 0 && depth < (1 << 8));
-   assert((int(flags) & ~int(Flags_Mask)) == 0);
-   assert(score > -(1 << 15) && score < +(1 << 15));
+   assert(move >= 0 && move < (1 << 16));
    assert(score != score::None);
+   assert(std::abs(score) < (1 << 15));
+   assert(depth > 0 && depth < (1 << 8));
 
    // probe
 
-   int    index = hash::index(key, p_mask);
+   int    index = hash::index(key, m_mask);
    uint32 lock  = hash::lock(key);
 
    Entry * be = nullptr;
@@ -93,23 +80,23 @@ void TT::store(Key key, Move_Index move, Depth depth, Flags flags, Score score) 
 
    for (int i = 0; i < Cluster_Size; i++) {
 
-      assert(index + i < p_size);
-      Entry & entry = p_table[index + i];
+      assert(index + i < m_size);
+      Entry & entry = m_table[index + i];
 
       if (entry.lock == lock) { // hash hit
 
          if (entry.depth <= depth) {
 
             assert(entry.lock == lock);
+            entry.date = m_date;
             if (move != Move_Index_None) entry.move = move;
-            entry.depth = depth;
-            entry.date = p_date;
-            entry.flags = int(flags);
             entry.score = score;
+            entry.flag = int(flag);
+            entry.depth = depth;
 
          } else { // deeper entry
 
-            entry.date = p_date;
+            entry.date = m_date;
          }
 
          return;
@@ -118,7 +105,7 @@ void TT::store(Key key, Move_Index move, Depth depth, Flags flags, Score score) 
       // evaluate replacement score
 
       int sc = 0;
-      sc = sc * Date_Size + p_age[entry.date];
+      sc = sc * Date_Size + m_age[entry.date];
       sc = sc * 256 - entry.depth;
       assert(sc > -256);
 
@@ -137,35 +124,33 @@ void TT::store(Key key, Move_Index move, Depth depth, Flags flags, Score score) 
    // store
 
    entry.lock = lock;
+   entry.date = m_date;
    entry.move = move;
-   entry.depth = depth;
-   entry.date = p_date;
-   entry.flags = int(flags);
    entry.score = score;
+   entry.flag = int(flag);
+   entry.depth = depth;
 }
 
-bool TT::probe(Key key, Move_Index & move, Depth & depth, Flags & flags, Score & score) {
-
-   // init
+bool TT::probe(Key key, Move_Index & move, Score & score, Flag & flag, Depth & depth) {
 
    // probe
 
-   int    index = hash::index(key, p_mask);
+   int    index = hash::index(key, m_mask);
    uint32 lock  = hash::lock(key);
 
    for (int i = 0; i < Cluster_Size; i++) {
 
-      assert(index + i < p_size);
-      const Entry & entry = p_table[index + i];
+      assert(index + i < m_size);
+      const Entry & entry = m_table[index + i];
 
       if (entry.lock == lock) {
 
          // found
 
          move = Move_Index(entry.move);
-         depth = Depth(entry.depth);
-         flags = Flags(entry.flags);
          score = Score(entry.score);
+         flag = Flag(entry.flag);
+         depth = Depth(entry.depth);
 
          return true;
       }
@@ -173,8 +158,7 @@ bool TT::probe(Key key, Move_Index & move, Depth & depth, Flags & flags, Score &
 
    // not found
 
+   move = Move_Index_None;
    return false;
-}
-
 }
 

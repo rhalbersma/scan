@@ -16,9 +16,9 @@
 static Side parse_side   (Scanner_Number & scan);
 static void parse_pieces (Bit piece[], Scanner_Number & scan);
 
-static Pos  pos_from_string (const std::string & s, const std::string & sides, const std::string & pieces);
+static Pos pos_from_string (const std::string & s, const std::string & sides, const std::string & pieces);
 
-static Pos  pos_from_pieces (Side turn, Bit wm, Bit bm, Bit wk, Bit bk);
+static Pos pos_from_pieces (Side turn, Bit wm, Bit bm, Bit wk, Bit bk);
 
 static std::string pos_pieces (const Pos & pos, Side sd);
 
@@ -36,7 +36,7 @@ Pos pos_from_fen(const std::string & s) {
 
    Side turn = parse_side(scan);
 
-   Bit piece_side[Side_Size][Piece_Size] { { Bit(0), Bit(0) }, { Bit(0), Bit(0) } };
+   Bit piece_side[Side_Size][Piece_Size] {};
 
    while (!scan.eos()) {
 
@@ -78,7 +78,7 @@ static void parse_pieces(Bit piece[], Scanner_Number & scan) {
       token = scan.get_token();
       if (token == ",") token = scan.get_token();
 
-      if (token == "") { // EOS
+      if (token.empty()) { // EOS
          return;
       } else if (token == ":") {
          scan.unget_char(); // HACK: no unget_token
@@ -125,7 +125,7 @@ Pos pos_from_dxp(const std::string & s) {
 static Pos pos_from_string(const std::string & s, const std::string & sides, const std::string & pieces) {
 
    assert(sides.size() == Side_Size);
-   assert(pieces.size() == 5);
+   assert(pieces.size() == Piece_Side_Size + 1);
 
    if (s.size() != Dense_Size + 1) throw Bad_Input();
 
@@ -137,12 +137,9 @@ static Pos pos_from_string(const std::string & s, const std::string & sides, con
 
    // squares
 
-   Bit piece_side[5] { Bit(0), Bit(0), Bit(0), Bit(0), Bit(0) };
+   Bit piece_side[Piece_Side_Size + 1] {};
 
-   for (int dense = 0; dense < Dense_Size; dense++) {
-
-      Square sq = square_sparse(dense);
-
+   for (Square sq : bit::Squares) {
       Piece_Side ps = Piece_Side(find(s[i++], pieces));
       bit::set(piece_side[ps], sq);
    }
@@ -166,9 +163,6 @@ static Pos pos_from_pieces(Side turn, Bit wm, Bit bm, Bit wk, Bit bk) {
    Bit side[Side_Size] { wm | wk, bm | bk };
    if (side[side_opp(turn)] == 0) throw Bad_Input();
    if (var::Variant == var::BT && (side[turn] & (wk | bk)) != 0) throw Bad_Input();
-
-   if (bit::count(side[White]) > 20) throw Bad_Input();
-   if (bit::count(side[Black]) > 20) throw Bad_Input();
 
    return Pos(turn, wm, bm, wk, bk);
 }
@@ -198,16 +192,16 @@ static std::string pos_pieces(const Pos & pos, Side sd) {
 
       if (ps == prev) {
 
-         to++;
+         to += 1;
 
       } else {
 
          if (prev >= 0) {
-            if (s != "") s += ",";
+            if (!s.empty()) s += ",";
             s += run_string(piece_side_make(prev), from, to);
          }
 
-         if (ps != Empty && piece_side_side(ps) == sd) {
+         if (piece_side_is_side(ps, sd)) {
             prev = ps;
             from = sq;
             to   = sq;
@@ -220,7 +214,7 @@ static std::string pos_pieces(const Pos & pos, Side sd) {
    }
 
    if (prev >= 0) {
-      if (s != "") s += ",";
+      if (!s.empty()) s += ",";
       s += run_string(piece_side_make(prev), from, to);
    }
 
@@ -234,7 +228,7 @@ static std::string run_string(Piece_Side ps, int from, int to) {
 
    std::string s;
 
-   if (piece_side_piece(ps) == King) s += "K";
+   if (piece_side_is_piece(ps, King)) s += "K";
 
    s += std::to_string(from);
 
@@ -242,7 +236,7 @@ static std::string run_string(Piece_Side ps, int from, int to) {
       // no-op
    } else if (to == from + 1) { // length 2
       s += ",";
-      if (piece_side_piece(ps) == King) s += "K";
+      if (piece_side_is_piece(ps, King)) s += "K";
       s += std::to_string(to);
    } else { // length 3+
       s += "-";
@@ -252,6 +246,10 @@ static std::string run_string(Piece_Side ps, int from, int to) {
    return s;
 }
 
+std::string pos_hub(const Pos & pos) {
+   return pos_string(pos, "WB", "wbWBe");
+}
+
 std::string pos_dxp(const Pos & pos) {
    return pos_string(pos, "WZ", "wzWZe");
 }
@@ -259,16 +257,13 @@ std::string pos_dxp(const Pos & pos) {
 static std::string pos_string(const Pos & pos, const std::string & sides, const std::string & pieces) {
 
    assert(sides.size() == Side_Size);
-   assert(pieces.size() == 5);
+   assert(pieces.size() == Piece_Side_Size + 1);
 
    std::string s;
 
    s += sides[pos.turn()];
 
-   for (int dense = 0; dense < Dense_Size; dense++) {
-
-      Square sq = square_sparse(dense);
-
+   for (Square sq : bit::Squares) {
       Piece_Side ps = pos::piece_side(pos, sq);
       s += pieces[ps];
    }

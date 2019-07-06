@@ -17,7 +17,7 @@ void init ();
 std::string read  ();
 void        write (const std::string & s);
 
-}
+} // namespace socket_
 
 #endif // !defined SOCKET_HPP
 

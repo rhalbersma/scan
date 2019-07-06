@@ -11,10 +11,9 @@
 #include "bb_comp.hpp"
 #include "bb_index.hpp"
 #include "common.hpp"
+#include "gen.hpp"
 #include "libmy.hpp"
 #include "list.hpp"
-#include "move.hpp"
-#include "move_gen.hpp"
 #include "pos.hpp"
 #include "score.hpp"
 #include "var.hpp"
@@ -23,26 +22,26 @@ namespace bb {
 
 // constants
 
-const int Value_Size { 4 };
+const int Value_Size {4};
 
 // types
 
 class Base {
 
-private :
+private:
 
-   ID p_id;
-   Index p_size;
-   Index_ p_index;
+   ID m_id;
+   Index m_size;
+   Index_ m_index;
 
-public :
+public:
 
    void load (ID id);
 
-   ID    id   () const { return p_id; }
-   Index size () const { return p_size; }
+   ID    id   () const { return m_id; }
+   Index size () const { return m_size; }
 
-   Value get (Index index) const { return Value(p_index.get(index)); }
+   int operator [] (Index index) const { return m_index[index]; }
 };
 
 // "constants"
@@ -67,27 +66,27 @@ void init() {
 
       ID id = ID(i);
 
-      if (!id_is_illegal(id) && !id_is_loss(id) && is_load(id_size(id))) {
+      if (!id_is_illegal(id) && !id_is_end(id) && is_load(id_size(id))) {
          G_Base[id].load(id);
       }
    }
-}
-
-bool pos_is_load(const Pos & pos) {
-   return is_load(pos::size(pos));
 }
 
 static bool is_load(int size) {
    return var::BB && size <= var::BB_Size;
 }
 
+bool pos_is_load(const Pos & pos) {
+   return is_load(pos::size(pos));
+}
+
 bool pos_is_search(const Pos & pos, int bb_size) {
    return pos::size(pos) <= bb_size && pos_is_load(pos);
 }
 
-Value probe(const Pos & pos) {
+int probe(const Pos & pos) {
 
-   if (pos::is_wipe(pos)) return Loss; // for BT variant
+   if (pos::is_wipe(pos)) return value_from_nega(pos::result(pos, pos.turn())); // for BT variant
 
    List list;
    gen_captures(list, pos);
@@ -98,17 +97,10 @@ Value probe(const Pos & pos) {
 
    } else { // capture position
 
-      Value node = Loss;
+      int node = Loss;
 
-      for (int i = 0; i < list.size(); i++) {
-
-         Move mv = list.move(i);
-
-         Pos new_pos = pos.succ(mv);
-
-         Value child = probe(new_pos);
-
-         node = value_update(node, child);
+      for (Move mv : list) {
+         node = value_update(node, probe(pos.succ(mv)));
          if (node == Win) break;
       }
 
@@ -116,18 +108,18 @@ Value probe(const Pos & pos) {
    }
 }
 
-Value probe_raw(const Pos & pos) {
+int probe_raw(const Pos & pos) {
 
    assert(!pos::is_capture(pos));
 
    ID id = pos_id(pos);
    assert(!id_is_illegal(id));
-   if (id_is_loss(id)) return Loss;
+   if (id_is_end(id)) return (var::Variant == var::Losing) ? Win : Loss;
 
    const Base & base = G_Base[id];
    Index index = pos_index(id, pos);
 
-   Value value = base.get(index);
+   int value = base[index];
    assert(value != Unknown);
 
    return value;
@@ -135,18 +127,18 @@ Value probe_raw(const Pos & pos) {
 
 void Base::load(ID id) {
 
-   p_id = id;
-   p_size = index_size(id);
+   m_id = id;
+   m_size = index_size(id);
 
-   std::string file_name = std::string("data/bb") + var::variant("", "_killer", "_bt") + "/" + id_file(p_id);
-   p_index.load(file_name, p_size);
+   std::string file_name = std::string("data/bb") + var::variant_name() + "/" + std::to_string(id_size(id)) + "/" + id_name(id);
+   m_index.load(file_name, m_size);
 }
 
-Value value_update(Value node, Value child) {
+int value_update(int node, int child) {
    return value_max(node, value_age(child));
 }
 
-Value value_age(Value val) {
+int value_age(int val) {
 
    if (val == Win) {
       return Loss;
@@ -157,12 +149,12 @@ Value value_age(Value val) {
    }
 }
 
-Value value_max(Value v0, Value v1) {
+int value_max(int v0, int v1) {
    assert(v0 != Win);
    return (Order[v1] > Order[v0]) ? v1 : v0;
 }
 
-int value_nega(Value val, Side sd) {
+int value_nega(int val, Side sd) {
 
    assert(val != Unknown);
 
@@ -175,15 +167,26 @@ int value_nega(Value val, Side sd) {
    }
 }
 
-std::string value_to_string(Value val) {
+int value_from_nega(int val) {
 
-   switch (val) {
-      case Win  : return "win";
-      case Loss : return "loss";
-      case Draw : return "draw";
-      default   : return "unknown";
+   if (val > 0) {
+      return Win;
+   } else if (val < 0) {
+      return Loss;
+   } else {
+      return Draw;
    }
 }
 
+std::string value_to_string(int val) {
+
+   switch (val) {
+      case Win :  return "win";
+      case Loss : return "loss";
+      case Draw : return "draw";
+      default :   return "unknown";
+   }
 }
+
+} // namespace bb
 

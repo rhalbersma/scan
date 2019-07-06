@@ -1,11 +1,10 @@
 
-// libmy.cpp
-
 // includes
 
-#include <cmath>
+#include <algorithm>
 #include <cctype>
-#include <cstdio>
+#include <cerrno>
+#include <cmath>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
@@ -19,55 +18,41 @@
 
 namespace ml {
 
+// variables
+
+static std::mt19937_64 gen;
+
 // functions
 
 // math
 
 void rand_init() {
-   std::srand(std::time(nullptr));
-}
-
-double rand_float() {
-   return double(std::rand()) / (double(RAND_MAX) + 1.0);
+   gen.seed(std::random_device{}());
 }
 
 uint64 rand_int_64() {
-   static std::mt19937_64 gen;
    return gen();
 }
 
 bool rand_bool(double p) {
    assert(p >= 0.0 && p <= 1.0);
-   return rand_float() < p;
+   return std::bernoulli_distribution{p}(gen);
 }
 
 int round(double x) {
-   return int(floor(x + 0.5));
-}
-
-int div(int a, int b) {
-
-   assert(b > 0);
-
-   if (b <= 0) {
-      std::cerr << "ml::div(): divide error" << std::endl;
-      std::exit(EXIT_FAILURE);
-   }
-
-   int div = a / b;
-   if (a < 0 && a != b * div) div--; // fix buggy C semantics
-
-   return div;
+   return int(std::floor(x + 0.5));
 }
 
 int div_round(int a, int b) {
-   assert(b > 0);
-   return div(a + b / 2, b);
-}
 
-bool is_power_2(int64 n) {
-   assert(n >= 0);
-   return (n & (n - 1)) == 0 && n != 0;
+   assert(b > 0);
+
+   a += b / 2;
+
+   int div = a / b;
+   if (a < 0 && a != b * div) div -= 1; // fix buggy C semantics
+
+   return div;
 }
 
 // stream
@@ -118,22 +103,14 @@ std::string ftos(double x, int decimals) {
 
 std::string trim(const std::string & s) {
 
-   int begin = 0;
-
-   while (begin < int(s.size()) && std::isspace(s[begin])) {
-      begin++;
-   }
-
    int end = int(s.size());
 
-   while (end > begin && std::isspace(s[end - 1])) {
+   while (end > 0 && std::isspace(s[end - 1])) {
       end--;
    }
 
-   assert(begin <= end);
-
-   return s.substr(begin, end - begin);
+   return s.substr(0, end);
 }
 
-}
+} // namespace ml
 

@@ -13,16 +13,19 @@ namespace hub {
 
 // types
 
-typedef std::pair<std::string, std::string> Pair;
+struct Pair {
+   std::string name;
+   std::string value;
+};
 
 class Scanner {
 
-private :
+private:
 
-   std::string p_string;
-   int p_pos;
+   const std::string m_string;
+   int m_pos {0};
 
-public :
+public:
 
    explicit Scanner (const std::string & s);
 
@@ -35,7 +38,7 @@ public :
 
    static bool is_name (const std::string & s);
 
-private :
+private:
 
    void skip_blank ();
    void skip_char  ();
@@ -59,7 +62,7 @@ void add_pair (std::string & line, const std::string & name, int value);
 void add_pair (std::string & line, const std::string & name, double value, int precision);
 void add_pair (std::string & line, const std::string & name, const std::string & value);
 
-}
+} // namespace hub
 
 #endif // !defined HUB_HPP
 

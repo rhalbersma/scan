@@ -11,6 +11,7 @@
 #include "move.hpp"
 #include "pos.hpp"
 #include "score.hpp"
+#include "tt.hpp" // for Flag
 #include "util.hpp" // for Timer
 
 class List;
@@ -18,10 +19,11 @@ class Node;
 
 // constants
 
-const Depth Depth_Max { Depth(99) };
+const Depth Depth_Max {Depth(99)};
 
-const Ply Ply_Max  { Ply(99) };
-const int Ply_Size { Ply_Max + 1 };
+const Ply Ply_Root {Ply(0)};
+const Ply Ply_Max  {Ply(99)};
+const int Ply_Size {Ply_Max + 1};
 
 // types
 
@@ -29,93 +31,88 @@ enum Output_Type { Output_None, Output_Terminal, Output_Hub };
 
 class Line {
 
-private :
+private:
 
-   ml::Array<Move, Ply_Size> p_move;
+   ml::Array<Move, Ply_Size> m_move;
 
-public :
+public:
 
-   Line () { clear(); }
+   Line () = default;
 
-   void clear () { p_move.clear(); }
-   void add   (Move mv) { assert(mv != move::None); p_move.add(mv); }
+   void clear ()        { m_move.clear(); }
+   void add   (Move mv) { m_move.add(mv); }
 
    void set    (Move mv);
    void concat (Move mv, const Line & pv);
 
-   int  size ()      const { return p_move.size(); }
-   Move move (int i) const { return p_move[i]; }
+   int  size        ()      const { return m_move.size(); }
+   Move operator [] (int i) const { return m_move[i]; }
 
-   Move operator[] (int i) const { return move(i); }
+   auto begin () const { return m_move.begin(); }
+   auto end   () const { return m_move.end(); }
 
    std::string to_string (const Pos & pos, int size_max = 0) const;
-   std::string to_hub    () const;
+   std::string to_hub    (const Pos & pos) const;
 };
 
 class Search_Input {
 
-public :
+public:
 
-   bool move;
-   bool book;
-   Depth depth;
-   bool input;
-   Output_Type output;
-   bool ponder;
+   bool move {true};
+   bool book {true};
+   Depth depth {Depth_Max};
+   int64 nodes {int64(1E12)};
+   bool input {false};
+   Output_Type output {Output_None};
 
-private :
+   bool smart {false};
+   int moves {0};
+   double time {1E6};
+   double inc {0.0};
+   bool ponder {false};
 
-   bool p_smart;
-   int p_moves;
-   double p_time;
-   double p_inc;
-
-public :
-
-   Search_Input () { init(); }
+public:
 
    void init ();
 
-   void set_time (double time);
    void set_time (int moves, double time, double inc);
-
-   bool   smart  () const { return p_smart; }
-   int    moves  () const { return p_moves; }
-   double time   () const { return p_time; }
-   double inc    () const { return p_inc; }
 };
 
 class Search_Output {
 
-public :
+public:
 
-   Move move;
-   Move answer;
-   Score score;
-   Depth depth;
+   Move move {move::None};
+   Move answer {move::None};
+   Score score {score::None};
+   Flag flag {Flag::None};
+   Depth depth {Depth(0)};
    Line pv;
 
-   int64 node;
-   int64 leaf;
-   int64 ply_sum;
+   int64 node {0};
+   int64 leaf {0};
+   int64 ply_sum {0};
 
-private :
+private:
 
-   const Search_Input * p_si;
-   Pos p_pos;
-   Timer p_timer;
+   const Search_Input * m_si;
+   Pos m_pos;
+   Timer m_timer;
 
-public :
+public:
 
    void init (const Search_Input & si, const Pos & pos);
    void end  ();
 
-   void new_best_move  (Move mv, Score sc = score::None);
-   void new_best_move  (Move mv, Score sc, Depth depth, const Line & pv);
-   void disp_best_move ();
+   void start_iter (Depth depth);
+   void end_iter   ();
 
-   double ply_avg () const { return (leaf == 0) ? 0.0 : double(ply_sum) / double(leaf); }
-   double time    () const { return p_timer.elapsed(); }
+   void new_best_move (Move mv, Score sc = score::None);
+   void new_best_move (Move mv, Score sc, Flag flag, Depth depth, const Line & pv);
+
+   double ply_avg () const;
+   double time    () const;
 };
 
 // functions

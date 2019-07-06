@@ -13,7 +13,7 @@ namespace dxp {
 
 void loop ();
 
-}
+} // namespace dxp
 
 #endif // !defined DXP_HPP
 

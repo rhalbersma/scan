@@ -1,9 +1,6 @@
 
 // includes
 
-#include <cstdio>
-#include <cstdlib>
-#include <iostream>
 #include <string>
 
 #include "bit.hpp"
@@ -13,71 +10,73 @@
 
 // "constants"
 
-const Inc Dir_Inc[Dir_Size] { -J1, -I1, +I1, +J1 };
+const int Square_Sparse[Dense_Size] {
+      0,  1,  2,  3,  4,
+    6,  7,  8,  9, 10,
+     13, 14, 15, 16, 17,
+   19, 20, 21, 22, 23,
+     26, 27, 28, 29, 30,
+   32, 33, 34, 35, 36,
+     39, 40, 41, 42, 43,
+   45, 46, 47, 48, 49,
+     52, 53, 54, 55, 56,
+   58, 59, 60, 61, 62,
+};
 
-// variables
+const int Square_Dense[Square_Size] {
+      0,  1,  2,  3,  4, -1,
+    5,  6,  7,  8,  9, -1, -1,
+     10, 11, 12, 13, 14, -1,
+   15, 16, 17, 18, 19, -1, -1,
+     20, 21, 22, 23, 24, -1,
+   25, 26, 27, 28, 29, -1, -1,
+     30, 31, 32, 33, 34, -1,
+   35, 36, 37, 38, 39, -1, -1,
+     40, 41, 42, 43, 44, -1,
+   45, 46, 47, 48, 49,
+};
 
-static int Square_Sparse[Dense_Size];
-static int Square_Dense[Square_Size];
+const int Square_File[Square_Size] {
+      1,  3,  5,  7,  9, -1,
+    0,  2,  4,  6,  8, -1, -1,
+      1,  3,  5,  7,  9, -1,
+    0,  2,  4,  6,  8, -1, -1,
+      1,  3,  5,  7,  9, -1,
+    0,  2,  4,  6,  8, -1, -1,
+      1,  3,  5,  7,  9, -1,
+    0,  2,  4,  6,  8, -1, -1,
+      1,  3,  5,  7,  9, -1,
+    0,  2,  4,  6,  8,
+};
 
-static int Square_File[Square_Size];
-static int Square_Rank[Square_Size];
+const int Square_Rank[Square_Size] {
+      0,  0,  0,  0,  0, -1,
+    1,  1,  1,  1,  1, -1, -1,
+      2,  2,  2,  2,  2, -1,
+    3,  3,  3,  3,  3, -1, -1,
+      4,  4,  4,  4,  4, -1,
+    5,  5,  5,  5,  5, -1, -1,
+      6,  6,  6,  6,  6, -1,
+    7,  7,  7,  7,  7, -1, -1,
+      8,  8,  8,  8,  8, -1,
+    9,  9,  9,  9,  9,
+};
+
+const Inc Dir_Inc[Dir_Size] {
+   -J1, -I1, +I1, +J1,
+   -L1, -K1, +K1, +L1, // for Frisian draughts
+};
 
 // functions
 
-void common_init() {
-
-   // square numbering
-
-   int dense = 0;
-   int sparse = 0;
-
-   for (int rk = 0; rk < Line_Size; rk++) {
-
-      for (int fl = 0; fl < Line_Size + 3; fl++) { // 3 ghost files
-
-         assert(dense < Dense_Size);
-         assert(sparse < Square_Size);
-
-         if (square_is_light(fl, rk)) { // invalid square
-
-         } else if (square_is_ok(fl, rk)) { // board square
-
-            Square_Sparse[dense] = sparse;
-            Square_Dense[sparse] = dense;
-
-            Square_File[sparse] = fl;
-            Square_Rank[sparse] = rk;
-
-            assert(square_make(fl, rk) == sparse);
-
-            dense++;
-            sparse++;
-
-            if (dense >= Dense_Size) break; // all squares have been covered
-
-         } else { // ghost square
-
-            Square_Dense[sparse] = -1;
-
-            Square_File[sparse] = -1;
-            Square_Rank[sparse] = -1;
-
-            sparse++;
-         }
-      }
-   }
-}
-
 bool square_is_ok(int fl, int rk) {
-   return (fl >= 0 && fl < Line_Size)
-       && (rk >= 0 && rk < Line_Size)
+   return (fl >= 0 && fl < File_Size)
+       && (rk >= 0 && rk < Rank_Size)
        && square_is_dark(fl, rk);
 }
 
 bool square_is_ok(int sq) {
-   return (sq >= 0 && sq < Square_Size)
-       && Square_Dense[sq] >= 0;
+   return (sq >= 0 && sq < Square_Size) && Square_Dense[sq] >= 0;
 }
 
 bool square_is_light(int fl, int rk) {
@@ -90,7 +89,7 @@ bool square_is_dark(int fl, int rk) {
 
 Square square_make(int fl, int rk) {
    assert(square_is_ok(fl, rk));
-   int dense = (rk * Line_Size + fl) / 2;
+   int dense = (rk * File_Size + fl) / 2;
    return square_sparse(dense);
 }
 
@@ -128,6 +127,7 @@ int square_rank(Square sq) {
 }
 
 Square square_opp(Square sq) {
+   assert(square_sparse(0) == 0);
    return square_make((Square_Size - 1) - sq);
 }
 
@@ -135,15 +135,15 @@ int square_rank(Square sq, Side sd) {
 
    int rk = square_rank(sq);
 
-   if (sd == White) {
-      return (Line_Size - 1) - rk;
+   if (sd != Black) {
+      return (Rank_Size - 1) - rk;
    } else {
       return rk;
    }
 }
 
 bool square_is_promotion(Square sq, Side sd) {
-   return square_rank(sq, sd) == Line_Size - 1;
+   return square_rank(sq, sd) == Rank_Size - 1;
 }
 
 std::string square_to_string(Square sq) {
@@ -186,18 +186,24 @@ std::string side_to_string(Side sd) {
    return (sd == White) ? "white" : "black";
 }
 
-Piece_Side piece_side_make(int ps) {
+Piece_Side piece_side_make(int ps) { // excludes Empty
    assert(ps >= 0 && ps < Piece_Side_Size);
    return Piece_Side(ps);
 }
 
-Piece piece_side_piece(Piece_Side ps) {
-   assert(ps != Empty);
-   return Piece(ps >> 1);
+bool piece_side_is_piece(Piece_Side ps, Piece pc) {
+   return ps != Empty && (ps >> 1) == pc;
 }
 
-Side piece_side_side(Piece_Side ps) {
-   assert(ps != Empty);
-   return side_make(ps & 1);
+bool piece_side_is_side(Piece_Side ps, Side sd) {
+   return ps != Empty && (ps & 1) == sd;
+}
+
+Square Bit::operator*() const {
+   return bit::first(*this);
+}
+
+void Bit::operator++() {
+   *this = bit::rest(*this);
 }
 

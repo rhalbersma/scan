@@ -1,7 +1,7 @@
 
 // includes
 
-#include <cstdio>
+#include <cstdio> // for perror
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -17,8 +17,8 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 
-typedef int SOCKET;
-const SOCKET INVALID_SOCKET { -1 };
+using SOCKET = int;
+const SOCKET INVALID_SOCKET {-1};
 void closesocket(int socket) { close(socket); }
 
 #endif
@@ -31,7 +31,9 @@ namespace socket_ { // HACK: "socket" creates a conflict on macOS
 
 // constants
 
-const int Buffer_Size_Max { 4096 };
+const int Buffer_Size_Max {4096};
+
+const char EOL {'\0'}; // DXP protocol
 
 // variables
 
@@ -84,7 +86,7 @@ void init() {
 
       std::cout << "waiting for a connection" << std::endl;
 
-      G_Socket = accept(listen_socket, NULL, NULL);
+      G_Socket = accept(listen_socket, nullptr, nullptr);
       if (G_Socket == INVALID_SOCKET) {
          std::perror("accept");
          std::exit(EXIT_FAILURE);
@@ -110,7 +112,7 @@ void init() {
       }
    }
 
-   std::cout << "connection established" << std::endl;
+   std::cout << "connection established\n";
    std::cout << std::endl;
 
    G_Buffer_Size = 0;
@@ -135,10 +137,10 @@ std::string read() {
       } else if (len == 0) { // EOF
          std::cerr << "connection closed" << std::endl;
          std::exit(EXIT_SUCCESS);
-      } else { // success
-         G_Buffer_Size += len;
-         assert(G_Buffer_Size <= Buffer_Size_Max);
       }
+
+      G_Buffer_Size += len;
+      assert(G_Buffer_Size <= Buffer_Size_Max);
    }
 
    // extract the first "line"
@@ -150,7 +152,7 @@ std::string read() {
    while (true) {
       assert(i < G_Buffer_Size);
       char c = G_Buffer[i++];
-      if (c == '\0') break;
+      if (c == EOL) break;
       s += c;
    }
 
@@ -170,7 +172,7 @@ std::string read() {
 void write(const std::string & s) {
 
    const char * buffer = s.c_str();
-   int size = s.size() + 1;
+   int size = s.size() + 1; // includes '\0'
 
    for (int i = 0; i < size;) {
 
@@ -179,21 +181,21 @@ void write(const std::string & s) {
       if (len < 0) { // error
          std::perror("send");
          std::exit(EXIT_FAILURE);
-      } else { // success
-         i += len;
-         assert(i <= size);
       }
+
+      i += len;
+      assert(i <= size);
    }
 }
 
 static bool has_input() {
 
    for (int i = 0; i < G_Buffer_Size; i++) {
-      if (G_Buffer[i] == '\0') return true;
+      if (G_Buffer[i] == EOL) return true;
    }
 
    return false;
 }
 
-}
+} // namespace socket_
 

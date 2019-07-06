@@ -7,6 +7,7 @@
 #include <map>
 #include <string>
 
+#include "common.hpp"
 #include "libmy.hpp"
 #include "var.hpp"
 
@@ -20,10 +21,11 @@ int  Book_Ply;
 int  Book_Margin;
 bool Ponder;
 bool SMP;
-int  SMP_Threads;
+int  Threads;
 int  TT_Size;
 bool BB;
 int  BB_Size;
+
 bool DXP_Server;
 std::string DXP_Host;
 int  DXP_Port;
@@ -52,11 +54,12 @@ void init() {
    set("threads", "1");
    set("tt-size", "24");
    set("bb-size", "5");
+
    set("dxp-server", "true");
    set("dxp-host", "127.0.0.1");
    set("dxp-port", "27531");
    set("dxp-initiator", "false");
-   set("dxp-time", "3");
+   set("dxp-time", "5");
    set("dxp-moves", "75");
    set("dxp-board", "false");
    set("dxp-search", "false");
@@ -66,7 +69,7 @@ void init() {
 
 void load(const std::string & file_name) {
 
-   std::ifstream file(file_name.c_str());
+   std::ifstream file(file_name);
 
    if (!file) {
       std::cerr << "unable to open file \"" << file_name << "\"" << std::endl;
@@ -109,6 +112,8 @@ void load(const std::string & file_name) {
 
       set(name, value);
    }
+
+   update();
 }
 
 void update() {
@@ -120,22 +125,27 @@ void update() {
       Variant = Normal;
    } else if (variant == "killer") {
       Variant = Killer;
-   } else if (variant == "bt") {
+   } else if (variant == "breakthrough" || variant == "bt") {
       Variant = BT;
+   } else if (variant == "frisian") {
+      Variant = Frisian;
+   } else if (variant == "losing") {
+      Variant = Losing;
    } else {
       std::cerr << "error: variant = \"" << variant << "\"" << std::endl;
       std::exit(EXIT_FAILURE);
    }
 
-   Book          = get_bool("book");
-   Book_Ply      = get_int("book-ply");
-   Book_Margin   = get_int("book-margin");
-   Ponder        = get_bool("ponder");
-   SMP_Threads   = get_int("threads");
-   SMP           = SMP_Threads > 1;
-   TT_Size       = 1 << get_int("tt-size");
-   BB_Size       = get_int("bb-size");
-   BB            = BB_Size > 0;
+   Book        = get_bool("book");
+   Book_Ply    = get_int("book-ply");
+   Book_Margin = get_int("book-margin");
+   Ponder      = get_bool("ponder");
+   Threads     = get_int("threads");
+   SMP         = Threads > 1;
+   TT_Size     = 1 << get_int("tt-size");
+   BB_Size     = get_int("bb-size");
+   BB          = BB_Size > 0;
+
    DXP_Server    = get_bool("dxp-server");
    DXP_Host      = get("dxp-host");
    DXP_Port      = get_int("dxp-port");
@@ -179,15 +189,16 @@ static int get_int(const std::string & name) {
    return std::stoi(get(name));
 }
 
-std::string variant(const std::string & normal, const std::string & killer, const std::string & bt) {
+std::string variant_name() {
 
    switch (Variant) {
-      case Normal : return normal;
-      case Killer : return killer;
-      case BT     : return bt;
-      default     : return normal;
+      case Normal :  return "";
+      case Killer :  return "_killer";
+      case BT :      return "_bt";
+      case Frisian : return "_frisian";
+      case Losing :  return "_losing";
    }
 }
 
-}
+} // namespace var
 

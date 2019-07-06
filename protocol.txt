@@ -1,5 +1,5 @@
 
-Hub protocol for draughts, version 2 (used by Scan 3.0 and Hub 2.0)
+Hub protocol for draughts, version 2 (used by Scan 3.1 and Hub 2.1)
 
 ---
 
@@ -7,7 +7,7 @@ Protocol overview.
 
 Hub is a protocol similar to UCI (from chess) and Hub-1 (Scan 2.0), but with a more flexible syntax.  It is text-based (even line-based) and doesn't specify how information is transmitted.  The engine uses standard I/O, so it is up to the GUI (or anything that plays a similar role) to set up the communication.
 
-Shortly after connection between the GUI and the engine, an initialisation phase takes place.  Then, from the engine point of view, a game (or problem solving, or analysis) is merely a sequence of searches.  A search is handled similarly to a remote procedure call (RPC): the GUI sends the parameters in several steps, and the engine starts computing.  The latter outputs intermediate information (anytime algorithm), until a final answer is produced due to depth/time constraint or interruption by the GUI.
+Shortly after connection between the GUI and the engine, an initialisation phase takes place.  Then, from the engine point of view, a game (or problem solving, or analysis) is merely a sequence of searches.  A search is handled similarly to a remote procedure call (RPC): the GUI sends the parameters in several steps, and the engine starts computing.  The latter outputs intermediate information (anytime algorithm), until a final answer is produced due to depth/node/time constraint or interruption by the GUI.
 
 Note: Scan needs to be launched in Hub mode using a "hub" command-line argument.  On Unix systems, that would be "./scan hub".  As the protocol uses text, you can experiment manually.
 
@@ -28,12 +28,12 @@ Both the engine and the GUI should ignore commands and arguments that they don't
 The initialisation phase looks like this:
 
 hub
-    id name=Scan version=3.0 author="Fabien Letouzey" country=France
-    param name=variant value=normal type=enum values="normal killer bt"
+    id name=Scan version=3.1 author="Fabien Letouzey" country=France
+    param name=variant value=normal type=enum values="normal killer bt frisian losing"
     param name=book value=true type=bool
     ...
     wait
-set-param name=variant value=killer
+set-param name=variant value=frisian
 set-param name=book value=false
 ...
 init
@@ -60,7 +60,7 @@ Note: Hub will set parameters only if the user-selected value is different from 
 
 A search is launched in 3 steps:
 1) position
-2) time/depth limit
+2) depth/node/time limit
 3) search mode, which actually launches the search
 
 example:
@@ -91,10 +91,11 @@ The move format is the same as standard notation for quiet moves, for example "3
 Note: Sending moves is necessary to allow the engine to detect draw by repetition during search.  Hub only sends king moves, as they are usually reversible.
 
 
-2) time/depth limit
+2) depth/node/time limit
 
 "level" can have one of the following forms:
 level depth=<max depth> (optional)
+level nodes=<max nodes> (optional)
 level move-time=<time per move> (optional)
 level [moves=<remaining moves>] time=<remaining time> [inc=<increment per move>]
 level infinite (for analysis, the GUI will send "stop" later)
@@ -177,8 +178,9 @@ GUI commands to the engine:
   * init
 - position
   * pos pos=... [moves="..."]
-- time/depth limit
+- depth/node/time limit
   * level depth=...
+  * level nodes=...
   * level move-time=...
   * level [moves=...] time=... [inc=...]
   * level infinite
@@ -206,7 +208,7 @@ engine answers to the GUI:
   * pong
   * error message="..."
 
-That is all for now, today is 2017-07-11.
+That is all for now, today is 2019-07-06.
 
 Fabien Letouzey (fabien_letouzey@hotmail.com).
 

@@ -14,26 +14,22 @@
 
 // types
 
-class Bad_Input : public std::exception {
-};
-
-class Bad_Output : public std::exception {
-};
+class Bad_Input  : public std::exception {};
+class Bad_Output : public std::exception {};
 
 class Scanner_Number {
 
-private :
+private:
 
-   std::string p_string;
-   int p_pos;
+   const std::string m_string;
+   int m_pos {0};
 
-public :
+public:
 
    explicit Scanner_Number (const std::string & s);
 
    std::string get_token ();
 
-   std::string string () const;
    bool eos () const;
    char get_char ();
    void unget_char ();
@@ -41,49 +37,47 @@ public :
 
 class Timer {
 
-private :
+private:
 
-   typedef std::chrono::time_point<std::chrono::system_clock> time_t;
-   typedef std::chrono::duration<double> second_t;
+   using time_t   = std::chrono::time_point<std::chrono::system_clock>;
+   using second_t = std::chrono::duration<double>;
 
-   double p_elapsed;
-   bool p_running;
-   time_t p_start;
+   double m_elapsed {0.0};
+   bool m_running {false};
+   time_t m_start;
+
+public:
+
+   void reset() {
+      m_elapsed = 0.0;
+      m_running = false;
+   }
+
+   void start() {
+      m_start = now();
+      m_running = true;
+   }
+
+   void stop() {
+      m_elapsed += time();
+      m_running = false;
+   }
+
+   double elapsed() const {
+      double time = m_elapsed;
+      if (m_running) time += this->time();
+      return time;
+   }
+
+private:
 
    static time_t now() {
       return std::chrono::system_clock::now();
    }
 
    double time() const {
-      assert(p_running);
-      return std::chrono::duration_cast<second_t>(now() - p_start).count();
-   }
-
-public :
-
-   Timer() {
-      reset();
-   }
-
-   void reset() {
-      p_elapsed = 0;
-      p_running = false;
-   }
-
-   void start() {
-      p_start = now();
-      p_running = true;
-   }
-
-   void stop() {
-      p_elapsed += time();
-      p_running = false;
-   }
-
-   double elapsed() const {
-      double time = p_elapsed;
-      if (p_running) time += this->time();
-      return time;
+      assert(m_running);
+      return std::chrono::duration_cast<second_t>(now() - m_start).count();
    }
 };
 

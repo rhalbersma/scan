@@ -1,98 +1,69 @@
 
 // includes
 
-#include <cstdlib>
-#include <iostream>
 #include <string>
 
 #include "bb_base.hpp"
 #include "common.hpp"
 #include "game.hpp"
 #include "libmy.hpp"
-#include "move.hpp"
 #include "pos.hpp"
 #include "score.hpp"
 
 // functions
 
-Game::Game() {
-   init(pos::Start);
-}
-
-void Game::init(const Pos & pos) {
-   init(pos, 0, 0.0, 0.0);
-}
-
 void Game::init(const Pos & pos, int moves, double time, double inc) {
 
-   p_pos_start = pos;
-   p_moves = moves;
-   p_time = time;
-   p_inc = inc;
+   m_pos_start = pos;
+   m_moves = moves;
+   m_time = time;
+   m_inc = inc;
 
-   p_move.clear();
+   m_move.clear();
 
    reset();
 }
 
 void Game::reset() {
 
-   p_ply = 0;
+   m_ply = 0;
 
-   p_node.clear();
+   m_node.clear();
 
-   p_node.add_ref(Node(p_pos_start));
-   assert(p_node.size() == p_ply + 1);
+   m_node.add(Node(m_pos_start));
+   assert(m_node.size() == m_ply + 1);
 
-   p_clock[White] = p_time;
-   p_clock[Black] = p_time;
-   p_flag[White] = false;
-   p_flag[Black] = false;
+   m_clock[White] = m_time;
+   m_clock[Black] = m_time;
 }
 
 void Game::add_move(Move mv, double time) {
 
-   if (!move::is_legal(mv, pos())) {
-      pos::disp(pos());
-      std::cout << "illegal move: " << move::to_hub(mv) << std::endl;
-      std::cout << std::endl;
-      std::exit(EXIT_FAILURE);
-   }
-
-   Move_Info mi;
-   mi.move = mv;
-   mi.time = time;
-
-   p_move.set_size(p_ply); // truncate move list
-   p_move.add_ref(mi);
+   m_move.set_size(m_ply); // truncate move list
+   m_move.add({mv, float(time)});
 
    play_move();
 }
 
 void Game::play_move() {
 
-   assert(p_ply < size());
-   Move   mv   = p_move[p_ply].move;
-   double time = p_move[p_ply].time;
-   p_ply++;
+   assert(m_ply < size());
+   Move   mv   = m_move[m_ply].move;
+   double time = m_move[m_ply].time;
+   m_ply += 1;
 
    Side turn = this->turn();
 
-   p_clock[turn] += p_inc; // pre-increment #
-   p_clock[turn] -= time;
+   m_clock[turn] += m_inc; // pre-increment #
+   m_clock[turn] -= time;
 
-   if (p_clock[turn] < 0.0 && !p_flag[turn]) {
-      // std::cerr << "LOSS ON TIME ###" << std::endl;
-      p_flag[turn] = true;
+   if (m_moves != 0 && m_ply % (m_moves * 2) == 0) {
+      m_clock[White] += m_time;
+      m_clock[Black] += m_time;
    }
 
-   if (p_moves != 0 && p_ply % (p_moves * 2) == 0) {
-      p_clock[White] += p_time;
-      p_clock[Black] += p_time;
-   }
-
-   p_node.add_ref(node().succ(mv));
-   assert(p_node.size() == p_ply + 1);
+   m_node.add(node().succ(mv));
+   assert(m_node.size() == m_ply + 1);
 }
 
 void Game::go_to(int ply) {
@@ -105,7 +76,7 @@ void Game::go_to(int ply) {
       play_move();
    }
 
-   assert(p_ply == ply);
+   assert(m_ply == ply);
 }
 
 bool Game::is_end(bool use_bb) const {
@@ -118,21 +89,13 @@ int Game::result(bool use_bb, Side sd) const {
 
    int res;
 
-   if (pos::is_loss(pos())) {
-
-      res = score::side(-1, turn()); // for white
-
+   if (pos::is_end(pos())) {
+      res = pos::result(pos(), White);
    } else if (node().is_draw(3)) {
-
       res = 0;
-
    } else if (use_bb && bb::pos_is_load(pos())) {
-
-      bb::Value val = bb::probe(pos());
-      res = bb::value_nega(val, turn()); // for white
-
+      res = bb::value_nega(bb::probe(pos()), turn()); // for white
    } else {
-
       assert(false);
       res = 0;
    }

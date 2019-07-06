@@ -11,23 +11,21 @@
 
 class Input : public Waitable {
 
-private :
+private:
 
-   std::atomic<bool> p_has_input;
-   bool p_eof;
-   std::string p_line;
+   std::atomic<bool> m_has_input {false};
+   bool m_eof {false};
+   std::string m_line;
 
-public :
-
-   Input ();
+public:
 
    bool peek_line (std::string & line);
    bool get_line  (std::string & line);
 
-   void set_eof  ();
-   void set_line (std::string & line);
+   void put_eof  ();
+   void put_line (const std::string & line);
 
-   bool has_input () const { return p_has_input; }
+   bool has_input () const { return m_has_input; }
 };
 
 // variables
@@ -51,10 +49,10 @@ static void input_program(Input * input) {
    std::string line;
 
    while (std::getline(std::cin, line)) {
-      input->set_line(line);
+      input->put_line(line);
    }
 
-   input->set_eof();
+   input->put_eof();
 }
 
 bool has_input() {
@@ -69,19 +67,14 @@ bool get_line(std::string & line) {
    return G_Input.get_line(line);
 }
 
-Input::Input() {
-   p_has_input = false;
-   p_eof = false;
-}
-
 bool Input::peek_line(std::string & line) {
 
    lock();
 
-   assert(p_has_input);
+   assert(m_has_input);
 
-   bool line_ok = !p_eof;
-   if (line_ok) line = p_line;
+   bool line_ok = !m_eof;
+   if (line_ok) line = m_line;
 
    unlock();
 
@@ -92,14 +85,14 @@ bool Input::get_line(std::string & line) {
 
    lock();
 
-   while (!p_has_input) {
+   while (!m_has_input) {
       wait();
    }
 
-   bool line_ok = !p_eof;
-   if (line_ok) line = p_line;
+   bool line_ok = !m_eof;
+   if (line_ok) line = m_line;
 
-   p_has_input = false;
+   m_has_input = false;
    signal();
 
    unlock();
@@ -107,33 +100,33 @@ bool Input::get_line(std::string & line) {
    return line_ok;
 }
 
-void Input::set_eof() {
+void Input::put_eof() {
 
    lock();
 
-   while (p_has_input) {
+   while (m_has_input) {
       wait();
    }
 
-   p_eof = true;
+   m_eof = true;
 
-   p_has_input = true;
+   m_has_input = true;
    signal();
 
    unlock();
 }
 
-void Input::set_line(std::string & line) {
+void Input::put_line(const std::string & line) {
 
    lock();
 
-   while (p_has_input) {
+   while (m_has_input) {
       wait();
    }
 
-   p_line = line;
+   m_line = line;
 
-   p_has_input = true;
+   m_has_input = true;
    signal();
 
    unlock();

@@ -1,8 +1,9 @@
 
 // includes
 
-#include <cstdio>
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <string>
 
 #include "bit.hpp"
@@ -11,47 +12,33 @@
 #include "list.hpp"
 #include "move.hpp"
 #include "pos.hpp"
+#include "var.hpp"
 
 // functions
 
-List::List() {
-   clear();
-}
-
-List::List(const List & list) {
-   copy(list);
-}
-
-void List::operator=(const List & list) {
-   copy(list);
-}
-
-void List::clear() {
-   p_capture_size = 0;
-   p_size = 0;
-}
-
 void List::add_move(Square from, Square to) {
-   assert(p_capture_size == 0);
-   Move mv = move::make(from, to);
-   add(mv);
+   assert(m_capture_score == 0);
+   add(move::make(from, to));
 }
 
-void List::add_capture(Square from, Square to, Bit caps) {
+void List::add_capture(Square from, Square to, Bit caps, const Pos & pos, int king) {
 
    assert(caps != 0);
+   assert(king >= 0 && king < 2);
 
-   int size = bit::count(caps);
+   int capture_score = (var::Variant == var::Frisian)
+                     ? bit::count(caps & pos.man()) * 64 + bit::count(caps & pos.king()) * 126 + king
+                     : bit::count(caps);
 
-   if (size >= p_capture_size) {
+   if (capture_score >= m_capture_score) {
 
       Move mv = move::make(from, to, caps);
 
-      if (!(size >= 4 && list::has(*this, mv))) { // check for duplicate
+      if (!(bit::count(caps) >= 3 && list::has(*this, mv))) { // check for duplicate
 
-         if (size > p_capture_size) {
-            p_capture_size = size;
-            p_size = 0;
+         if (capture_score > m_capture_score) {
+            m_capture_score = capture_score;
+            m_size = 0;
          }
 
          add(mv);
@@ -59,126 +46,113 @@ void List::add_capture(Square from, Square to, Bit caps) {
    }
 }
 
-void List::add(Move mv) {
-
-   assert(!(list::has(*this, mv)));
-
-   assert(p_size < Size);
-   p_move[p_size] = mv;
-   // p_score[p_size] = 0;
-   p_size++;
+void List::set_size(int size) {
+   assert(size <= m_size);
+   m_size = size;
 }
 
-void List::copy(const List & list) { // does not copy scores
+void List::set_score(int i, int sc) {
+   assert(i >= 0 && i < m_size);
+   assert(std::abs(sc) < (1 << 15));
+   m_score[i] = sc;
+}
 
-   p_size = list.p_size;
+void List::copy(const List & list) { // HACK: does not copy scores
 
-   for (int i = 0; i < list.p_size; i++) {
-      p_move[i] = list.p_move[i];
+   m_capture_score = list.m_capture_score;
+
+   m_size = list.m_size;
+
+   for (int i = 0; i < list.m_size; i++) {
+      m_move[i] = list.m_move[i];
+      // m_score[i] = list.m_score[i];
    }
 }
 
-void List::mtf(int i) {
+void List::move_to_front(int i) {
 
-   assert(i >= 0 && i < p_size);
+   assert(i >= 0 && i < m_size);
 
-   Move mv = p_move[i];
-   int  sc = p_score[i];
+   Move mv = m_move [i];
+   int  sc = m_score[i];
 
    for (int j = i; j > 0; j--) {
-      p_move[j]  = p_move[j - 1];
-      p_score[j] = p_score[j - 1];
+      m_move [j] = m_move [j - 1];
+      m_score[j] = m_score[j - 1];
    }
 
-   p_move[0]  = mv;
-   p_score[0] = sc;
+   m_move [0] = mv;
+   m_score[0] = sc;
 }
 
 void List::sort() {
 
    // init
 
-   int size = p_size;
-   if (size <= 1) return;
-
-   p_score[size] = -(1 << 30); // HACK: sentinel
+   if (m_size <= 1) return;
 
    // insert sort (stable)
 
-   for (int i = size - 2; i >= 0; i--) {
+   m_score[m_size] = -(1 << 15); // HACK: sentinel
 
-      Move mv = p_move[i];
-      int  sc = p_score[i];
+   for (int i = m_size - 2; i >= 0; i--) {
+
+      Move mv = m_move [i];
+      int  sc = m_score[i];
 
       int j;
 
-      for (j = i; sc < p_score[j + 1]; j++) {
-         p_move[j]  = p_move[j + 1];
-         p_score[j] = p_score[j + 1];
+      for (j = i; sc < m_score[j + 1]; j++) {
+         m_move [j] = m_move [j + 1];
+         m_score[j] = m_score[j + 1];
       }
 
-      assert(j < size);
-
-      p_move[j]  = mv;
-      p_score[j] = sc;
-   }
-
-   // debug
-
-   if (DEBUG) {
-      for (int i = 0; i < size - 1; i++) {
-         assert(p_score[i] >= p_score[i + 1]);
-      }
+      assert(j < m_size);
+      m_move [j] = mv;
+      m_score[j] = sc;
    }
 }
 
-void List::sort_static() { // for opening book
+void List::sort_static(const Pos & pos) { // for opening book
 
    // init
 
-   int size = p_size;
-   if (size <= 1) return;
+   if (m_size <= 1) return;
 
    // insert sort (stable)
 
-   for (int i = size - 2; i >= 0; i--) {
+   for (int i = m_size - 2; i >= 0; i--) {
 
-      Move mv = p_move[i];
-      int  sc = p_score[i];
-      uint64 order = move_order(mv);
+      Move mv = m_move [i];
+      int  sc = m_score[i];
+
+      uint64 order = move_order(mv, pos);
 
       int j;
 
-      for (j = i; j + 1 < size && order < move_order(p_move[j + 1]); j++) {
-         p_move[j]  = p_move[j + 1];
-         p_score[j] = p_score[j + 1];
+      for (j = i; j + 1 < m_size && order < move_order(m_move[j + 1], pos); j++) {
+         m_move [j] = m_move [j + 1];
+         m_score[j] = m_score[j + 1];
       }
 
-      assert(j < size);
-
-      p_move[j]  = mv;
-      p_score[j] = sc;
-   }
-
-   // debug
-
-   if (DEBUG) {
-      for (int i = 0; i < size - 1; i++) {
-         assert(move_order(p_move[i]) >= move_order(p_move[i + 1]));
-      }
+      assert(j < m_size);
+      m_move [j] = mv;
+      m_score[j] = sc;
    }
 }
 
-uint64 List::move_order(Move mv) { // for opening book
+uint64 List::move_order(Move mv, const Pos & pos) { // for opening book
 
-   uint64 from = move::from(mv);
-   uint64 to   = move::to(mv);
-   uint64 caps = move::captured(mv);
+   uint64 from = move::from(mv, pos);
+   uint64 to   = move::to(mv, pos);
+   uint64 caps = move::captured(mv, pos);
 
    return (from << (64 - 6)) | (to << (64 - 12)) | (caps >> 12);
 }
 
-namespace list {
+namespace list { // ###
+
+// functions
 
 int pick(const List & list, double k) {
 
@@ -187,8 +161,7 @@ int pick(const List & list, double k) {
    int bs = list.score(0);
 
    for (int i = 1; i < list.size(); i++) { // skip 0
-      int sc = list.score(i);
-      if (sc > bs) bs = sc;
+      bs = std::max(bs, list.score(i));
    }
 
    int index = -1;
@@ -209,8 +182,8 @@ int pick(const List & list, double k) {
 
 bool has(const List & list, Move mv) {
 
-   for (int i = 0; i < list.size(); i++) {
-      if (list.move(i) == mv) return true;
+   for (Move m : list) {
+      if (m == mv) return true;
    }
 
    return false;
@@ -219,7 +192,7 @@ bool has(const List & list, Move mv) {
 int find(const List & list, Move mv) {
 
    for (int i = 0; i < list.size(); i++) {
-      if (list.move(i) == mv) return i;
+      if (list[i] == mv) return i;
    }
 
    assert(false);
@@ -228,17 +201,12 @@ int find(const List & list, Move mv) {
 
 Move find_index(const List & list, Move_Index index, const Pos & pos) {
 
-   for (int i = 0; i < list.size(); i++) {
-
-      Move mv = list.move(i);
-
-      if (move::index(mv, pos) == index) {
-         return mv;
-      }
+   for (Move mv : list) {
+      if (move::index(mv, pos) == index) return mv;
    }
 
    return move::None;
 }
 
-}
+} // namespace list
 

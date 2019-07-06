@@ -14,10 +14,10 @@ class Pos;
 
 void sort_clear ();
 
-void good_move (Move_Index index);
-void bad_move  (Move_Index index);
+void good_move (Move mv, const Pos & pos);
+void bad_move  (Move mv, const Pos & pos);
 
-void sort_all (List & list, const Pos & pos, Move_Index tt_move);
+void sort_moves (List & list, const Pos & pos, Move_Index tt_move);
 
 #endif // !defined SORT_HPP
 

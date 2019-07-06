@@ -12,7 +12,7 @@ namespace var {
 
 // types
 
-enum Variant_Type { Normal, Killer, BT };
+enum Variant_Type { Normal, Killer, BT, Frisian, Losing };
 
 // variables
 
@@ -22,10 +22,11 @@ extern int  Book_Ply;
 extern int  Book_Margin;
 extern bool Ponder;
 extern bool SMP;
-extern int  SMP_Threads;
+extern int  Threads;
 extern int  TT_Size;
 extern bool BB;
 extern int  BB_Size;
+
 extern bool DXP_Server;
 extern std::string DXP_Host;
 extern int  DXP_Port;
@@ -44,9 +45,9 @@ void update ();
 std::string get (const std::string & name);
 void        set (const std::string & name, const std::string & value);
 
-std::string variant (const std::string & normal, const std::string & killer, const std::string & bt);
+std::string variant_name ();
 
-}
+} // namespace var
 
 #endif // !defined VAR_HPP
 

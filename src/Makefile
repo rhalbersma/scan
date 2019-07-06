@@ -4,8 +4,8 @@
 EXE = scan
 
 OBJS = bb_base.o bb_comp.o bb_index.o bit.o book.o common.o dxp.o eval.o \
-       fen.o game.o hash.o hub.o libmy.o list.o main.o move.o move_gen.o \
-       pos.o score.o search.o socket.o sort.o thread.o tt.o util.o var.o
+       fen.o game.o gen.o hash.o hub.o libmy.o list.o main.o move.o pos.o \
+       score.o search.o socket.o sort.o thread.o tt.o util.o var.o
 
 # rules
 
@@ -16,18 +16,13 @@ clean:
 
 # general
 
-CXX      = g++
+CXX      = g++ # or clang++
 CXXFLAGS = -pthread
 LDFLAGS  = -pthread
-LIBS     = -lm
-
-# warnings
-
-CXXFLAGS += -ansi -pedantic -Wall -Wextra
 
 # C++
 
-CXXFLAGS += -std=c++11 -fno-rtti
+CXXFLAGS += -std=c++14 -fno-rtti
 
 # optimisation
 
@@ -36,6 +31,10 @@ LDFLAGS  += -O2
 
 CXXFLAGS += -flto
 LDFLAGS  += -flto
+
+# debug
+
+CXXFLAGS += -DNDEBUG
 
 # dependencies
 

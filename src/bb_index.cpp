@@ -2,7 +2,6 @@
 // includes
 
 #include <algorithm>
-#include <iostream>
 #include <string>
 
 #include "bb_index.hpp"
@@ -16,14 +15,17 @@ namespace bb {
 
 // constants
 
-const int Size { 7 };
+const int Man_Squares  {Dense_Size - File_Size / 2};
+const int King_Squares {Dense_Size};
 
-const int N_Max { Dense_Size };
-const int P_Max { 8 };
+const int N_Max {Dense_Size};
+const int P_Max {7};
+
+const bool Rev {true}; // argument literal for "reverse"
 
 // types
 
-typedef uint32 Tuple;
+using Tuple = uint32; // enough for 9 pieces
 
 // variables
 
@@ -31,24 +33,30 @@ static Tuple Tuple_Size[P_Max + 1][64];
 
 // prototypes
 
-static Index pos_index_wtm (ID is, Bit wm, Bit bm, Bit wk, Bit bk);
-static Index pos_index_btm (ID id, Bit wm, Bit bm, Bit wk, Bit bk);
+static Index pos_index_wtm (ID id, const Pos & pos);
+static Index pos_index_btm (ID id, const Pos & pos);
 
 static Tuple tuple_index     (Bit pieces, Bit squares, int p, int n);
 static Tuple tuple_index_rev (Bit pieces, Bit squares, int p, int n);
-static Tuple tuple_size      (int p, int n);
 
-static int bit_pos     (Square sq, Bit squares);
-static int bit_pos_rev (Square sq, Bit squares);
+static Tuple tuple_size (int p, int n);
 
-static uint64 before (Square sq);
-static uint64 after  (Square sq);
+static int wolf_index_white (ID id, const Pos & pos, bool rev = false);
+static int wolf_index_black (ID id, const Pos & pos, bool rev = false);
+
+static int wolf_size_white (ID id);
+static int wolf_size_black (ID id);
+
+static int bit_index     (Bit b, Square sq);
+static int bit_index_rev (Bit b, Square sq);
 
 // functions
 
 void index_init() {
 
-   // Pascal triangle
+   assert(N_Max < 64);
+
+   // Pascal's triangle
 
    for (int n = 0; n <= N_Max; n++) {
 
@@ -66,18 +74,8 @@ void index_init() {
    }
 }
 
-bool id_is_ok(ID id) {
-   return (id & ~07777) == 0 && id_size(id) <= Size;
-}
-
 ID id_make(int wm, int bm, int wk, int bk) {
-
-   assert(wm >= 0);
-   assert(bm >= 0);
-   assert(wk >= 0);
-   assert(bk >= 0);
-   assert(wm + bm + wk + bk <= Size);
-
+   assert(wm + bm + wk + bk < 8);
    return ID((wm << 9) | (bm << 6) | (wk << 3) | (bk << 0));
 }
 
@@ -86,7 +84,7 @@ bool id_is_illegal(ID id) {
        || (var::Variant == var::BT && (id & 00070) != 0);
 }
 
-bool id_is_loss(ID id) {
+bool id_is_end(ID id) {
    return (id & 07070) == 0
        || (var::Variant == var::BT && (id & 00007) != 0);
 }
@@ -95,35 +93,15 @@ int id_size(ID id) {
    return id_wm(id) + id_bm(id) + id_wk(id) + id_bk(id);
 }
 
-int id_wm(ID id) {
-   return (id >> 9) & 07;
-}
-
-int id_bm(ID id) {
-   return (id >> 6) & 07;
-}
-
-int id_wk(ID id) {
-   return (id >> 3) & 07;
-}
-
-int id_bk(ID id) {
-   return (id >> 0) & 07;
-}
-
 std::string id_name(ID id) {
 
    std::string name;
-   name += '0' + id_wm(id);
-   name += '0' + id_bm(id);
-   name += '0' + id_wk(id);
-   name += '0' + id_bk(id);
+   name += char('0' + id_wm(id));
+   name += char('0' + id_bm(id));
+   name += char('0' + id_wk(id));
+   name += char('0' + id_bk(id));
 
    return name;
-}
-
-std::string id_file(ID id) {
-   return std::to_string(id_size(id)) + "/" + id_name(id);
 }
 
 ID pos_id(const Pos & pos) {
@@ -145,13 +123,18 @@ Index pos_index(ID id, const Pos & pos) {
    assert(id == pos_id(pos));
 
    if (pos.turn() == White) {
-      return pos_index_wtm(id, pos.wm(), pos.bm(), pos.wk(), pos.bk());
+      return pos_index_wtm(id, pos);
    } else {
-      return pos_index_btm(id, pos.bm(), pos.wm(), pos.bk(), pos.wk());
+      return pos_index_btm(id, pos);
    }
 }
 
-static Index pos_index_wtm(ID id, Bit wm, Bit bm, Bit wk, Bit bk) {
+static Index pos_index_wtm(ID id, const Pos & pos) {
+
+   Bit wm = pos.wm();
+   Bit bm = pos.bm();
+   Bit wk = pos.wk();
+   Bit bk = pos.bk();
 
    int nwm = id_wm(id);
    int nbm = id_bm(id);
@@ -160,23 +143,37 @@ static Index pos_index_wtm(ID id, Bit wm, Bit bm, Bit wk, Bit bk) {
 
    Index index = 0;
 
-   index *= tuple_size(nwm, 45);
-   index += tuple_index_rev(wm, bit::WM_Squares, nwm, 45);
+   index *= tuple_size(nwm, Man_Squares);
+   index += tuple_index_rev(wm, bit::WM_Squares, nwm, Man_Squares);
 
-   index *= tuple_size(nbm, 45);
-   index += tuple_index(bm, bit::BM_Squares, nbm, 45);
+   index *= tuple_size(nbm, Man_Squares);
+   index += tuple_index(bm, bit::BM_Squares, nbm, Man_Squares);
 
-   index *= tuple_size(nwk, 50 - nwm - nbm);
-   index += tuple_index_rev(wk, Bit(bit::Squares ^ wm ^ bm), nwk, 50 - nwm - nbm);
+   index *= tuple_size(nwk, King_Squares - nwm - nbm);
+   index += tuple_index_rev(wk, bit::Squares ^ wm ^ bm, nwk, King_Squares - nwm - nbm);
 
-   index *= tuple_size(nbk, 50 - nwm - nbm - nwk);
-   index += tuple_index(bk, Bit(bit::Squares ^ wm ^ bm ^ wk), nbk, 50 - nwm - nbm - nwk);
+   index *= tuple_size(nbk, King_Squares - nwm - nbm - nwk);
+   index += tuple_index(bk, bit::Squares ^ wm ^ bm ^ wk, nbk, King_Squares - nwm - nbm - nwk);
+
+   if (var::Variant == var::Frisian) {
+
+      index *= wolf_size_white(id);
+      index += wolf_index_white(id, pos);
+
+      index *= wolf_size_black(id);
+      index += wolf_index_black(id, pos);
+   }
 
    assert(index < index_size(id));
    return index;
 }
 
-static Index pos_index_btm(ID id, Bit wm, Bit bm, Bit wk, Bit bk) {
+static Index pos_index_btm(ID id, const Pos & pos) {
+
+   Bit wm = pos.bm();
+   Bit bm = pos.wm();
+   Bit wk = pos.bk();
+   Bit bk = pos.wk();
 
    int nwm = id_wm(id);
    int nbm = id_bm(id);
@@ -185,17 +182,26 @@ static Index pos_index_btm(ID id, Bit wm, Bit bm, Bit wk, Bit bk) {
 
    Index index = 0;
 
-   index *= tuple_size(nwm, 45);
-   index += tuple_index(wm, bit::BM_Squares, nwm, 45);
+   index *= tuple_size(nwm, Man_Squares);
+   index += tuple_index(wm, bit::BM_Squares, nwm, Man_Squares);
 
-   index *= tuple_size(nbm, 45);
-   index += tuple_index_rev(bm, bit::WM_Squares, nbm, 45);
+   index *= tuple_size(nbm, Man_Squares);
+   index += tuple_index_rev(bm, bit::WM_Squares, nbm, Man_Squares);
 
-   index *= tuple_size(nwk, 50 - nwm - nbm);
-   index += tuple_index(wk, Bit(bit::Squares ^ wm ^ bm), nwk, 50 - nwm - nbm);
+   index *= tuple_size(nwk, King_Squares - nwm - nbm);
+   index += tuple_index(wk, bit::Squares ^ wm ^ bm, nwk, King_Squares - nwm - nbm);
 
-   index *= tuple_size(nbk, 50 - nwm - nbm - nwk);
-   index += tuple_index_rev(bk, Bit(bit::Squares ^ wm ^ bm ^ wk), nbk, 50 - nwm - nbm - nwk);
+   index *= tuple_size(nbk, King_Squares - nwm - nbm - nwk);
+   index += tuple_index_rev(bk, bit::Squares ^ wm ^ bm ^ wk, nbk, King_Squares - nwm - nbm - nwk);
+
+   if (var::Variant == var::Frisian) {
+
+      index *= wolf_size_white(id);
+      index += wolf_index_white(id, pos, Rev);
+
+      index *= wolf_size_black(id);
+      index += wolf_index_black(id, pos, Rev);
+   }
 
    assert(index < index_size(id));
    return index;
@@ -210,10 +216,15 @@ Index index_size(ID id) {
 
    Index size = 1;
 
-   size *= tuple_size(nwm, 45);
-   size *= tuple_size(nbm, 45);
-   size *= tuple_size(nwk, 50 - nwm - nbm);
-   size *= tuple_size(nbk, 50 - nwm - nbm - nwk);
+   size *= tuple_size(nwm, Man_Squares);
+   size *= tuple_size(nbm, Man_Squares);
+   size *= tuple_size(nwk, King_Squares - nwm - nbm);
+   size *= tuple_size(nbk, King_Squares - nwm - nbm - nwk);
+
+   if (var::Variant == var::Frisian) {
+      size *= wolf_size_white(id);
+      size *= wolf_size_black(id);
+   }
 
    return size;
 }
@@ -229,13 +240,12 @@ static Tuple tuple_index(Bit pieces, Bit squares, int p, int n) {
 
    Tuple index = 0;
 
-   Bit b;
-   int i;
+   int i = 0;
 
-   for (b = pieces, i = 0; b != 0; b = bit::rest(b), i++) {
-      Square sq = bit::first(b);
-      int pos = bit_pos(sq, squares);
+   for (Square sq : pieces) {
+      int pos = bit_index(squares, sq);
       index += tuple_size(i + 1, pos);
+      i++;
    }
 
    assert(i == p);
@@ -257,20 +267,19 @@ static Tuple tuple_index_rev(Bit pieces, Bit squares, int p, int n) {
 
    Square square[P_Max + 1];
 
-   Bit b;
-   int i;
+   int i = 0;
 
-   for (b = pieces, i = 0; b != 0; b = bit::rest(b), i++) {
-      Square sq = bit::first(b);
+   for (Square sq : pieces) {
       assert(i < p);
-      square[p - i - 1] = sq;
+      square[(p - 1) - i] = sq;
+      i++;
    }
 
    assert(i == p);
 
    for (int i = 0; i < p; i++) {
       Square sq = square[i];
-      int pos = bit_pos_rev(sq, squares);
+      int pos = bit_index_rev(squares, sq);
       index += tuple_size(i + 1, pos);
    }
 
@@ -284,24 +293,77 @@ static Tuple tuple_size(int p, int n) {
    return Tuple_Size[p][n];
 }
 
-static int bit_pos(Square sq, Bit squares) {
-   assert(bit::has(squares, sq));
-   return bit::count(squares & before(sq));
+static int wolf_index_white(ID id, const Pos & pos, bool rev) {
+
+   if (var::Variant == var::Frisian) {
+
+      Side sd = rev ? Black : White;
+      int index = pos.count(sd);
+
+      if (index != 0) { // sd has a wolf
+         int wolf = rev ? bit_index    (pos.king(sd), pos.wolf(sd))
+                        : bit_index_rev(pos.king(sd), pos.wolf(sd));
+         index += wolf * 3;
+      }
+
+      assert(index >= 0 && index <= id_wk(id) * 3);
+      return index;
+   }
+
+   return 0;
 }
 
-static int bit_pos_rev(Square sq, Bit squares) {
-   assert(bit::has(squares, sq));
-   return bit::count(squares & after(sq));
+static int wolf_index_black(ID id, const Pos & pos, bool rev) {
+
+   if (var::Variant == var::Frisian) {
+
+      Side sd = rev ? White : Black;
+      int index = pos.count(sd);
+
+      if (index != 0) { // sd has a wolf
+         int wolf = rev ? bit_index_rev(pos.king(sd), pos.wolf(sd))
+                        : bit_index    (pos.king(sd), pos.wolf(sd));
+         index += wolf * 3;
+      }
+
+      assert(index >= 0 && index <= id_bk(id) * 3);
+      return index;
+   }
+
+   return 0;
 }
 
-static uint64 before(Square sq) {
-   return ml::bit(sq) - 1;
+static int wolf_size_white(ID id) {
+
+   int size = 1;
+
+   if (var::Variant == var::Frisian && id_wm(id) != 0) {
+      size += id_wk(id) * 3;
+   }
+
+   return size;
 }
 
-static uint64 after(Square sq) {
-   assert(sq < 63);
-   return 0 - ml::bit(sq + 1); // HACK: some compilers complain if "0" is omitted
+static int wolf_size_black(ID id) {
+
+   int size = 1;
+
+   if (var::Variant == var::Frisian && id_bm(id) != 0) {
+      size += id_bk(id) * 3;
+   }
+
+   return size;
 }
 
+static int bit_index(Bit b, Square sq) {
+   assert(bit::has(b, sq));
+   return bit::count(b & (ml::bit(sq) - 1));
 }
+
+static int bit_index_rev(Bit b, Square sq) {
+   assert(bit::has(b, sq));
+   return bit::count(b & (0 - ml::bit(sq + 1)));
+}
+
+} // namespace bb
 

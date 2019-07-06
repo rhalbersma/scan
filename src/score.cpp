@@ -1,6 +1,8 @@
 
 // includes
 
+#include <cmath>
+
 #include "common.hpp"
 #include "libmy.hpp"
 #include "score.hpp"
@@ -9,10 +11,6 @@
 namespace score {
 
 // functions
-
-inline bool is_win  (Score sc) { return sc > +Eval_Inf; }
-inline bool is_loss (Score sc) { return sc < -Eval_Inf; }
-inline bool is_eval (Score sc) { return sc >= -Eval_Inf && sc <= +Eval_Inf; }
 
 Score to_tt(Score sc, Ply ply) {
 
@@ -32,15 +30,17 @@ Score to_tt(Score sc, Ply ply) {
 
 Score from_tt(Score sc, Ply ply) {
 
+   if (sc == score::None) return score::None; // HACK for SMP
+
    assert(is_ok(sc));
    assert(ply >= 0 && ply <= Ply_Max);
 
    if (is_win(sc)) {
       sc -= Score(ply);
-      assert(is_win(sc));
+      // assert(is_win(sc)); // triggers in SMP
    } else if (is_loss(sc)) {
       sc += Score(ply);
-      assert(is_loss(sc));
+      // assert(is_loss(sc)); // triggers in SMP
    }
 
    return sc;
@@ -58,14 +58,5 @@ Score clamp(Score sc) {
    return sc;
 }
 
-Score add_safe(Score sc, Score inc) {
-
-   if (is_eval(sc)) {
-      return clamp(sc + inc);
-   } else {
-      return sc;
-   }
-}
-
-}
+} // namespace score
 

@@ -13,45 +13,46 @@ class Pos;
 
 class List {
 
-private :
+private:
 
-   static const int Size { 128 };
+   static const int Size {128};
 
-   int p_capture_size;
+   int m_capture_score {0};
+   int m_size {0};
+   Move m_move[Size];
+   int16 m_score[Size];
 
-   int p_size;
-   Move p_move[Size];
-   int p_score[Size];
+public:
 
-public :
+   List () = default;
 
-   List ();
-   List (const List & list);
+   List            (const List & list) { copy(list); }
+   void operator = (const List & list) { copy(list); }
 
-   void operator= (const List & list);
+   void clear ()        { m_capture_score = 0; m_size = 0; }
+   void add   (Move mv) { assert(m_size < Size); m_move[m_size++] = mv; }
 
-   void clear       ();
    void add_move    (Square from, Square to);
-   void add_capture (Square from, Square to, Bit caps);
+   void add_capture (Square from, Square to, Bit caps, const Pos & pos, int king);
 
-   void add (Move mv);
+   void set_size  (int size);
+   void set_score (int i, int sc);
 
-   void set_size  (int size)      { assert(size <= p_size); p_size = size; }
-   void set_score (int i, int sc) { assert(i >= 0 && i < p_size); p_score[i] = sc; }
+   void move_to_front (int i);
+   void sort          ();
+   void sort_static   (const Pos & pos);
 
-   void mtf         (int i); // move to front
-   void sort        ();
-   void sort_static ();
+   int  size        ()      const { return m_size; }
+   Move move        (int i) const { assert(i >= 0 && i < m_size); return m_move[i]; }
+   int  score       (int i) const { assert(i >= 0 && i < m_size); return m_score[i]; }
+   Move operator [] (int i) const { return move(i); }
 
-   int  size  ()      const { return p_size; }
-   Move move  (int i) const { assert(i >= 0 && i < p_size); return p_move[i]; }
-   int  score (int i) const { assert(i >= 0 && i < p_size); return p_score[i]; }
+   const Move * begin () const { return &m_move[0]; }
+   const Move * end   () const { return &m_move[m_size]; }
 
-   Move operator[] (int i) const { return move(i); }
+private:
 
-private :
-
-   static uint64 move_order (Move mv);
+   static uint64 move_order (Move mv, const Pos & pos);
 
    void copy (const List & list);
 };
@@ -60,13 +61,13 @@ private :
 
 namespace list {
 
-int  pick (const List & list, double k);
+int pick (const List & list, double k);
 
 bool has        (const List & list, Move mv);
 int  find       (const List & list, Move mv);
 Move find_index (const List & list, Move_Index index, const Pos & pos);
 
-}
+} // namespace list
 
 #endif // !defined LIST_HPP
 

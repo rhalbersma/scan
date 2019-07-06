@@ -15,11 +15,11 @@ namespace bb {
 
 // constants
 
-const int ID_Size { 1 << 12 };
+const int ID_Size {1 << 12};
 
 // types
 
-typedef uint32 Index; // enough for 6 pieces (7 for BT variant)
+using Index = uint32; // enough for 6 pieces (7 for BT variant)
 
 enum ID : int;
 
@@ -27,28 +27,27 @@ enum ID : int;
 
 void index_init ();
 
-bool id_is_ok (ID id);
-ID   id_make  (int wm, int bm, int wk, int bk);
+ID id_make (int wm, int bm, int wk, int bk);
 
 bool id_is_illegal (ID id);
-bool id_is_loss    (ID id);
+bool id_is_end     (ID id);
 
-int  id_size (ID id);
+int id_size (ID id);
 
-int  id_wm (ID id);
-int  id_bm (ID id);
-int  id_wk (ID id);
-int  id_bk (ID id);
+inline int id_wm (ID id) { return (id >> 9) & 07; }
+inline int id_bm (ID id) { return (id >> 6) & 07; }
+inline int id_wk (ID id) { return (id >> 3) & 07; }
+inline int id_bk (ID id) { return (id >> 0) & 07; }
 
 std::string id_name (ID id);
-std::string id_file (ID id);
 
 ID pos_id (const Pos & pos);
 
-Index pos_index  (ID id, const Pos & pos);
+Index pos_index (ID id, const Pos & pos);
+
 Index index_size (ID id);
 
-}
+} // namespace bb
 
 #endif // !defined BB_INDEX_HPP
 

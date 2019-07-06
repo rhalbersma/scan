@@ -1,6 +1,7 @@
 
 // includes
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -14,18 +15,12 @@
 #include "libmy.hpp"
 #include "move.hpp"
 #include "pos.hpp"
-#include "score.hpp"
 #include "search.hpp"
 #include "socket.hpp"
 #include "util.hpp" // for Bad_Input and Bad_Output
 #include "var.hpp"
 
 namespace dxp {
-
-// constants
-
-const bool BB_Adj   { false };
-const bool Disp_DXP { false };
 
 // types
 
@@ -90,12 +85,12 @@ struct Message { // avoid "union" because of std::string constructor
 
 class Scanner {
 
-private :
+private:
 
-   std::string p_string;
-   int p_pos;
+   const std::string m_string;
+   int m_pos {0};
 
-public :
+public:
 
    explicit Scanner (const std::string & s);
 
@@ -143,7 +138,7 @@ static void error      (const std::string & msg);
 
 static void put_game_req (Side sd, double time, int moves, const Pos & pos);
 static void put_game_acc (char acceptance_code);
-static void put_move     (Move mv, double time);
+static void put_move     (Move mv, double time, const Pos & pos);
 static void put_game_end (int result, char stop_code);
 static void put_chat     (const std::string & s);
 static void put_back_acc (char acceptance_code);
@@ -217,7 +212,7 @@ static void handle_string(const std::string & s) {
       case 'C' : handle_chat(msg.chat);         break;
       case 'B' : handle_back_req(msg.back_req); break;
       case 'K' : handle_back_acc(msg.back_acc); break;
-      default  : throw Bad_Input();             break;
+      default :  throw Bad_Input();
    }
 }
 
@@ -278,7 +273,7 @@ static void handle_move(const Move_ & move) {
    Square from = square_from_std(move.from_field);
    Square to   = square_from_std(move.to_field);
 
-   Bit caps = Bit(0);
+   Bit caps {};
 
    for (int i = 0; i < move.number_captured; i++) {
       bit::set(caps, square_from_std(move.captured_pieces[i]));
@@ -288,7 +283,7 @@ static void handle_move(const Move_ & move) {
 
    if (!move::is_legal(mv, G_Game.pos())) {
       pos::disp(G_Game.pos());
-      error("illegal move: \"" + move::to_hub(mv) + "\"");
+      error("illegal move: \"" + move::to_hub(mv, G_Game.pos()) + "\"");
    }
 
    std::string move_string = move::to_string(mv, G_Game.pos());
@@ -299,7 +294,7 @@ static void handle_move(const Move_ & move) {
 
       pos::disp(G_Game.pos());
 
-      std::cout << Opp_Name << " plays " << move_string << std::endl;
+      std::cout << Opp_Name << " plays " << move_string << '\n';
       std::cout << std::endl;
    }
 
@@ -327,7 +322,7 @@ static void handle_back_req(const Back_Req & back_req) {
 
    int ply = (back_req.move_number - 1) * 2;
    if (decode_side(back_req.color_to_move) != White) ply++;
-   if (Start_Pos.turn() != White) ply--; // shift if black played the first move
+   if (Start_Pos.turn() != White) ply -= 1; // shift if black played the first move
 
    if (ply < 0 || ply > G_Game.size()) error("bad move number");
 
@@ -382,7 +377,7 @@ static void end_game(int result) {
 
    if (std::abs(result) <= 1) { // finished
 
-      Games++;
+      Games += 1;
       Total += result;
 
       std::printf("result %-4s  games %3d  score %+5.2f\n", result_to_string(result).c_str(), Games, double(Total) / double(Games));
@@ -420,9 +415,9 @@ static void update() {
 
    if (game.turn() != My_Side) return; // no pondering in DXP mode
 
-   if (game.is_end(BB_Adj)) {
+   if (game.is_end(false)) {
 
-      int result = game.result(BB_Adj, My_Side);
+      int result = game.result(false, My_Side);
 
       std::cout << "game ended (" << result_to_string(result) << ")" << std::endl;
       if (var::DXP_Board) std::cout << std::endl;
@@ -468,7 +463,7 @@ static void update() {
       Search_Input si;
       si.move = true;
       si.book = true;
-      si.set_time(game.moves(game.turn()), game.time(game.turn()), game.inc());
+      si.set_time(game.moves(), game.time(game.turn()), game.inc());
       si.input = false;
       si.output = var::DXP_Search ? Output_Terminal : Output_None;
 
@@ -476,25 +471,23 @@ static void update() {
       search(so, game.node(), si);
 
       Move mv = so.move;
-      double sc = double(so.score) / 100.0;
+      double sc = (so.score == score::None) ? 0.0 : double(so.score) / 100.0;
       double time = so.time();
 
       std::string move_string = move::to_string(mv, game.pos());
 
-      put_move(mv, time);
+      put_move(mv, time, game.pos());
       play_move(mv, time);
 
       if (var::DXP_Board) {
 
          pos::disp(game.pos());
 
-         std::cout << Engine_Name << " plays " << move_string;
-         if (so.score != score::None) std::cout << " (" << score_to_string(sc) << ")";
-         std::cout << std::endl;
+         std::cout << Engine_Name << " plays " << move_string << " (" << score_to_string(sc) << ")\n";
          std::cout << std::endl;
       }
 
-      if (so.score != score::None) Last_Score = sc; // ignore forced moves
+      if (sc != 0.0) Last_Score = sc; // ignore forced moves
    }
 }
 
@@ -515,7 +508,7 @@ static void put_game_req(Side sd, double time, int moves, const Pos & pos) {
 
    std::string dxp = pos_dxp(pos);
 
-   if (dxp == Start_DXP) {
+   if (pos == pos::Start) {
       msg.game_req.starting_position = 'A';
    } else {
       msg.game_req.starting_position = 'B';
@@ -536,21 +529,20 @@ static void put_game_acc(char acceptance_code) {
    put_string(encode_message('A', msg));
 }
 
-static void put_move(Move mv, double time) {
+static void put_move(Move mv, double time, const Pos & pos) {
 
    Message msg;
 
-   Square from = move::from(mv);
-   Square to   = move::to(mv);
-   Bit    caps = move::captured(mv);
+   Square from = move::from(mv, pos);
+   Square to   = move::to(mv, pos);
+   Bit    caps = move::captured(mv, pos);
 
    msg.move.time = time;
    msg.move.from_field = square_to_std(from);
    msg.move.to_field   = square_to_std(to);
    msg.move.number_captured = bit::count(caps);
    int i = 0;
-   for (Bit b = caps; b != 0; b = bit::rest(b)) {
-      Square sq = bit::first(b);
+   for (Square sq : caps) {
       msg.move.captured_pieces[i++] = square_to_std(sq);
    }
    assert(i == msg.move.number_captured);
@@ -564,7 +556,7 @@ static void put_game_end(int result, char stop_code) {
 
    Message msg;
 
-   msg.game_end.reason = '2' + result;
+   msg.game_end.reason = char('2' + result);
    msg.game_end.stop_code = stop_code;
 
    put_string(encode_message('E', msg));
@@ -604,7 +596,7 @@ static std::string encode_message(char header, const Message & msg) {
       case 'C' : s += encode_chat(msg.chat);         break;
       case 'B' : s += encode_back_req(msg.back_req); break;
       case 'K' : s += encode_back_acc(msg.back_acc); break;
-      default  : throw Bad_Output();                 break;
+      default :  throw Bad_Output();
    }
 
    return s;
@@ -623,7 +615,7 @@ static void decode_message(char & header, Message & msg, const std::string & s) 
       case 'C' : decode_chat(msg.chat, scan);         break;
       case 'B' : decode_back_req(msg.back_req, scan); break;
       case 'K' : decode_back_acc(msg.back_acc, scan); break;
-      default  : throw Bad_Input();                   break;
+      default :  throw Bad_Input();
    }
 }
 
@@ -807,7 +799,7 @@ static std::string encode_int(int n, int size) { // fill with '0'
    s.resize(size);
 
    for (int i = 0; i < size; i++) {
-      s[size - i - 1] = '0' + n % 10;
+      s[size - i - 1] = char('0' + n % 10);
       n /= 10;
    }
 
@@ -835,7 +827,7 @@ static Side decode_side(char c) {
    switch (c) {
       case 'W' : return White;
       case 'Z' : return Black;
-      default  : throw Bad_Input();
+      default :  throw Bad_Input();
    }
 }
 
@@ -854,13 +846,10 @@ static std::string decode_string(Scanner & scan, int size) {
    return ml::trim(s);
 }
 
-Scanner::Scanner(const std::string & s) {
-   p_string = s;
-   p_pos = 0;
-}
+Scanner::Scanner(const std::string & s) : m_string{s} {}
 
 std::string Scanner::get_field() { // remaining characters
-   return get_field(int(p_string.size()) - p_pos);
+   return get_field(int(m_string.size()) - m_pos);
 }
 
 std::string Scanner::get_field(int size) {
@@ -875,35 +864,21 @@ std::string Scanner::get_field(int size) {
 }
 
 bool Scanner::eos() const {
-   return p_pos >= int(p_string.size());
+   return m_pos == int(m_string.size());
 }
 
 char Scanner::get_char() {
    if (eos()) throw Bad_Input();
-   return p_string[p_pos++];
+   return m_string[m_pos++];
 }
 
 static std::string get_string() {
-
-   std::string s = socket_::read();
-
-   if (Disp_DXP) {
-      std::cout << "< " << s << std::endl;
-      if (var::DXP_Board) std::cout << std::endl;
-   }
-
-   return s;
+   return socket_::read();
 }
 
 static void put_string(const std::string & s) {
-
-   if (Disp_DXP) {
-      std::cout << "> " << s << std::endl;
-      if (var::DXP_Board) std::cout << std::endl;
-   }
-
    socket_::write(s);
 }
 
-}
+} // namespace dxp
 

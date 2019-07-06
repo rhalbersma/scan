@@ -1,6 +1,7 @@
 
 // includes
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -9,40 +10,41 @@
 
 #include "book.hpp"
 #include "common.hpp"
+#include "gen.hpp"
 #include "hash.hpp"
 #include "libmy.hpp"
 #include "list.hpp"
 #include "move.hpp"
-#include "move_gen.hpp"
 #include "pos.hpp"
 #include "score.hpp"
+#include "var.hpp"
 
 namespace book {
 
 // constants
 
-const int Hash_Bit  { 20 };
-const int Hash_Size { 1 << Hash_Bit };
-const int Hash_Mask { Hash_Size - 1 };
+const int Hash_Bit  {21};
+const int Hash_Size {1 << Hash_Bit};
+const int Hash_Mask {Hash_Size - 1};
 
-const Key Key_None { Key(0) };
+const Key Key_None {Key(0)};
 
 // types
 
-struct Entry {
-   Key key;
-   int16 score;
-   bool node;
-   bool done;
+struct Entry { // 16 bytes (with alignment)
+   Key key {Key_None};
+   int score {0};
+   bool node {false};
+   bool done {false};
 };
 
 class Book {
 
-private :
+private:
 
-   std::vector<Entry> p_table;
+   std::vector<Entry> m_table;
 
-public :
+public:
 
    void load  (const std::string & file_name);
    void clear ();
@@ -58,23 +60,20 @@ static Book G_Book;
 
 // prototypes
 
-static void  backup ();
-static Score backup (const Pos & pos);
+static void backup ();
+static int  backup (const Pos & pos);
 
 static void load (const std::string & file_name);
 static void load (std::istream & file, const Pos & pos);
 
-static void book_gen    (List & list, const Pos & pos);
-static void book_filter (List & list, Score margin);
-
-static bool  in_book    (const Pos & pos);
-static Score book_score (const Pos & pos);
-
 // functions
 
 void init() {
+
+   static_assert(sizeof(Entry) == 16, "");
+
    std::cout << "init book" << std::endl;
-   G_Book.load("data/book");
+   G_Book.load(std::string("data/book") + var::variant_name());
 }
 
 bool probe(const Pos & pos, Score margin, Move & move, Score & score) {
@@ -82,15 +81,34 @@ bool probe(const Pos & pos, Score margin, Move & move, Score & score) {
    move = move::None;
    score = score::None;
 
-   if (!in_book(pos)) return false;
+   const Entry * entry = G_Book.find_entry(pos);
+   if (entry == nullptr || !entry->node) return false;
 
    List list;
-   book_gen(list, pos);
+   gen_moves(list, pos);
 
-   book_filter(list, margin);
+   for (int i = 0; i < list.size(); i++) {
+      Move mv = list[i];
+      list.set_score(i, -G_Book.find_entry(pos.succ(mv))->score);
+   }
+
+   list.sort();
+
+   if (list.size() > 1) {
+
+      int i;
+
+      for (i = 1; i < list.size(); i++) { // skip 0
+         if (list.score(i) + margin < list.score(0)) break;
+      }
+
+      list.set_size(i);
+   }
+
    if (list.size() == 0) return false;
 
-   int i = list::pick(list, 20.0);
+   int i = list::pick(list, (var::Variant == var::Frisian) ? 10.0 : 20.0);
+
    move = list.move(i);
    score = score::make(list.score(i));
    return true;
@@ -103,19 +121,14 @@ void Book::load(const std::string & file_name) {
 }
 
 void Book::clear() {
-
-   p_table.resize(Hash_Size);
-
-   Entry entry { Key_None, 0, false, false };
-
-   for (int i = 0; i < int(p_table.size()); i++) {
-      p_table[i] = entry;
-   }
+   m_table.resize(Hash_Size);
+   Entry entry {};
+   std::fill(m_table.begin(), m_table.end(), entry);
 }
 
 void Book::clear_done() {
-   for (int i = 0; i < int(p_table.size()); i++) {
-      p_table[i].done = false;
+   for (Entry & entry : m_table) {
+      entry.done = false;
    }
 }
 
@@ -126,12 +139,12 @@ Entry * Book::find_entry(const Pos & pos, bool create) {
 
    for (int index = hash::index(key, Hash_Mask); true; index = (index + 1) & Hash_Mask) {
 
-      Entry * entry = &p_table[index];
+      Entry * entry = &m_table[index];
 
       if (entry->key == Key_None) { // free entry
 
          if (create) {
-            *entry = { key, 0, false, false };
+            *entry = {key, 0, false, false};
             return entry;
          } else {
             return nullptr;
@@ -149,26 +162,20 @@ static void backup() {
    (void) backup(pos::Start);
 }
 
-static Score backup(const Pos & pos) {
+static int backup(const Pos & pos) {
 
    Entry * entry = G_Book.find_entry(pos);
    assert(entry != nullptr);
 
-   if (entry->done || !entry->node) return Score(entry->score);
+   if (entry->done || !entry->node) return entry->score;
 
    List list;
    gen_moves(list, pos);
 
-   Score bs = score::None;
+   int bs = score::None;
 
-   for (int i = 0; i < list.size(); i++) {
-
-      Move mv = list.move(i);
-
-      Pos new_pos = pos.succ(mv);
-      Score sc = -backup(new_pos);
-
-      if (sc > bs) bs = sc;
+   for (Move mv : list) {
+      bs = std::max(bs, -backup(pos.succ(mv)));
    }
 
    if (bs == score::None) bs = -score::Inf; // no legal moves
@@ -182,7 +189,7 @@ static Score backup(const Pos & pos) {
 
 static void load(const std::string & file_name) {
 
-   std::ifstream file(file_name.c_str());
+   std::ifstream file(file_name);
 
    if (!file) {
       std::cerr << "unable to open file \"" << file_name << "\"" << std::endl;
@@ -199,7 +206,6 @@ static void load(std::istream & file, const Pos & pos) {
    assert(entry != nullptr);
 
    if (entry->done) return;
-   entry->done = true;
 
    bool node;
    file >> node;
@@ -224,61 +230,15 @@ static void load(std::istream & file, const Pos & pos) {
 
       List list;
       gen_moves(list, pos);
-      list.sort_static();
+      list.sort_static(pos);
 
-      for (int i = 0; i < list.size(); i++) {
-
-         Move mv = list.move(i);
-
-         Pos new_pos = pos.succ(mv);
-         load(file, new_pos);
+      for (Move mv : list) {
+         load(file, pos.succ(mv));
       }
    }
+
+   entry->done = true;
 }
 
-static void book_gen(List & list, const Pos & pos) {
-
-   gen_moves(list, pos);
-
-   for (int i = 0; i < list.size(); i++) {
-
-      Move mv = list.move(i);
-
-      Pos new_pos = pos.succ(mv);
-      Score sc = -book_score(new_pos);
-
-      list.set_score(i, sc);
-   }
-
-   list.sort();
-}
-
-static void book_filter(List & list, Score margin) {
-
-   if (list.size() > 1) {
-
-      int i;
-
-      for (i = 1; i < list.size(); i++) { // skip 0
-         if (list.score(i) + margin < list.score(0)) break;
-      }
-
-      list.set_size(i);
-   }
-}
-
-static bool in_book(const Pos & pos) {
-   const Entry * entry = G_Book.find_entry(pos);
-   return entry != nullptr && entry->node;
-}
-
-static Score book_score(const Pos & pos) {
-
-   const Entry * entry = G_Book.find_entry(pos);
-   assert(entry != nullptr);
-
-   return Score(entry->score);
-}
-
-}
+} // namespace book
 

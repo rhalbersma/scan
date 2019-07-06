@@ -11,12 +11,6 @@
 
 class Pos;
 
-// constants
-
-const std::string Start_FEN { "W:W31-50:B1-20" };
-const std::string Start_Hub { "Wbbbbbbbbbbbbbbbbbbbbeeeeeeeeeewwwwwwwwwwwwwwwwwwww" };
-const std::string Start_DXP { "Wzzzzzzzzzzzzzzzzzzzzeeeeeeeeeewwwwwwwwwwwwwwwwwwww" };
-
 // functions
 
 Pos pos_from_fen (const std::string & s);
@@ -24,6 +18,7 @@ Pos pos_from_hub (const std::string & s);
 Pos pos_from_dxp (const std::string & s);
 
 std::string pos_fen (const Pos & pos);
+std::string pos_hub (const Pos & pos);
 std::string pos_dxp (const Pos & pos);
 
 #endif // !defined FEN_HPP

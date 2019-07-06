@@ -15,27 +15,27 @@ namespace bb {
 
 // types
 
-class Index_ {
+class Index_ { // "Index" is already taken
 
-private :
+private:
 
-   Index p_size;
-   std::vector<uint8> p_table;
-   std::vector<Index> p_index;
+   Index m_size;
+   std::vector<uint8> m_table;
+   std::vector<Index> m_index;
 
-public :
+public:
 
    void load (const std::string & file_name, Index size);
 
-   Index size ()          const { return p_size; }
-   int   get  (Index pos) const;
+   Index size        ()          const { return m_size; }
+   int   operator [] (Index pos) const;
 };
 
 // functions
 
 void comp_init ();
 
-}
+} // namespace bb
 
 #endif // !defined BB_COMP_HPP
 

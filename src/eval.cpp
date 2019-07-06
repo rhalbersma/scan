@@ -17,79 +17,71 @@
 #include "score.hpp"
 #include "var.hpp"
 
+// compile-time functions
+
+constexpr int pow(int a, int b) { return (b == 0) ? 1 : pow(a, b - 1) * a; }
+
 // constants
 
-const int P { 2125820 };
+const int Pattern_Size {12}; // squares per pattern
+const int P {2125820}; // eval parameters
+const int Unit {10}; // units per cp
 
-const int Unit { 10 }; // units per cp
+// "constants"
 
-const int Pat_Squares { 12 };
+const int Perm_0[Pattern_Size] { 11, 10,  7,  6,  3,  2,  9,  8,  5,  4,  1,  0 };
+const int Perm_1[Pattern_Size] {  0,  1,  4,  5,  8,  9,  2,  3,  6,  7, 10, 11 };
 
 // variables
 
 static std::vector<int> G_Weight;
 
+static int Trits_0[pow(2, Pattern_Size)];
+static int Trits_1[pow(2, Pattern_Size)];
+
 // types
 
 class Score_2 {
 
-private :
+private:
 
-   int p_mg;
-   int p_eg;
+   int m_mg {0};
+   int m_eg {0};
 
-public :
-
-   Score_2() {
-      p_mg = 0;
-      p_eg = 0;
-   }
+public:
 
    void add(int var, int val) {
-      p_mg += G_Weight[var + 0] * val;
-      p_eg += G_Weight[var + P] * val;
+      m_mg += G_Weight[var * 2 + 0] * val;
+      m_eg += G_Weight[var * 2 + 1] * val;
    }
 
-   int mg () const { return p_mg; }
-   int eg () const { return p_eg; }
+   int mg () const { return m_mg; }
+   int eg () const { return m_eg; }
 };
-
-// "constants"
-
-const int Perm    [Pat_Squares] {  0,  1,  4,  5,  8,  9,  2,  3,  6,  7, 10, 11 };
-const int Perm_Rev[Pat_Squares] { 11, 10,  7,  6,  3,  2,  9,  8,  5,  4,  1,  0 };
-
-// compile-time functions
-
-constexpr int pow(int a, int b) {
-   return (b == 0) ? 1 : pow(a, b - 1) * a;
-}
-
-// variables
-
-static int Index_3    [pow(2, Pat_Squares)];
-static int Index_3_Rev[pow(2, Pat_Squares)];
 
 // prototypes
 
-static int  conv (int index, int size, int bf, int bt, const int perm[]);
+static int conv (int index, int size, int bf, int bt, const int perm[]);
 
-static void pst      (Score_2 & s2, int var, Bit wb, Bit bb);
+static void pst      (Score_2 & s2, int var, Bit bw, Bit bb);
 static void king_mob (Score_2 & s2, int var, const Pos & pos);
 static void pattern  (Score_2 & s2, int var, const Pos & pos);
 
 static void indices_column (uint64 white, uint64 black, int & index_top, int & index_bottom);
 static void indices_column (uint64 b, int & i0, int & i2);
 
+static Bit attacks (const Pos & pos, Side sd);
+
 // functions
 
-void eval_init(const std::string & file_name) {
+void eval_init() {
 
    std::cout << "init eval" << std::endl;
 
    // load weights
 
-   std::ifstream file(file_name.c_str(), std::ios::binary);
+   std::string file_name = std::string("data/eval") + var::variant_name();
+   std::ifstream file(file_name, std::ios::binary);
 
    if (!file) {
       std::cerr << "unable to open file \"" << file_name << "\"" << std::endl;
@@ -104,13 +96,13 @@ void eval_init(const std::string & file_name) {
 
    // init base conversion (2 -> 3)
 
-   int size = Pat_Squares;
+   int size = Pattern_Size;
    int bf = 2;
    int bt = 3;
 
    for (int i = 0; i < pow(bf, size); i++) {
-      Index_3    [i] = conv(i, size, bf, bt, Perm_Rev);
-      Index_3_Rev[i] = conv(i, size, bf, bt, Perm);
+      Trits_0[i] = conv(i, size, bf, bt, Perm_0);
+      Trits_1[i] = conv(i, size, bf, bt, Perm_1);
    }
 }
 
@@ -139,7 +131,7 @@ static int conv(int index, int size, int bf, int bt, const int perm[]) {
    return to;
 }
 
-Score eval(const Pos & pos, Side sd) {
+Score eval(const Pos & pos) {
 
    // features
 
@@ -170,13 +162,15 @@ Score eval(const Pos & pos, Side sd) {
 
    // left/right balance
 
-   s2.add(var, std::abs(pos::skew(pos, Black)) - std::abs(pos::skew(pos, White)));
+   if (var::Variant != var::Losing) {
+      s2.add(var, std::abs(pos::skew(pos, White)) - std::abs(pos::skew(pos, Black)));
+   }
    var += 1;
 
    // patterns
 
    pattern(s2, var, pos);
-   var += pow(3, 12) * 4;
+   var += pow(3, Pattern_Size) * 4;
 
    // game phase
 
@@ -184,6 +178,13 @@ Score eval(const Pos & pos, Side sd) {
    assert(stage >= 0 && stage <= Stage_Size);
 
    int sc = ml::div_round(s2.mg() * (Stage_Size - stage) + s2.eg() * stage, Unit * Stage_Size);
+
+   // Wolf rule
+
+   if (var::Variant == var::Frisian) {
+      static const int wolf[4] { 0, 1, 3, 6 };
+      sc += (wolf[pos.count(White)] - wolf[pos.count(Black)]) * -5;
+   }
 
    // drawish material
 
@@ -207,19 +208,17 @@ Score eval(const Pos & pos, Side sd) {
       }
    }
 
-   return score::clamp(Score(score::side(sc, sd))); // for sd
+   return score::clamp(score::side(Score(sc), pos.turn())); // for side to move
 }
 
-static void pst(Score_2 & s2, int var, Bit wb, Bit bb) {
+static void pst(Score_2 & s2, int var, Bit bw, Bit bb) {
 
-   for (Bit b = wb; b != 0; b = bit::rest(b)) {
-      Square sq = bit::first(b);
+   for (Square sq : bw) {
       s2.add(var + square_dense(sq), +1);
    }
 
-   for (Bit b = bb; b != 0; b = bit::rest(b)) {
-      Square sq = square_opp(bit::first(b));
-      s2.add(var + square_dense(sq), -1);
+   for (Square sq : bb) {
+      s2.add(var + square_dense(square_opp(sq)), -1);
    }
 }
 
@@ -228,24 +227,19 @@ static void king_mob(Score_2 & s2, int var, const Pos & pos) {
    int ns = 0;
    int nd = 0;
 
-   Bit wm = pos.wm();
-   Bit bm = pos.bm();
-
-   Bit e = bit::Squares ^ wm ^ bm;
+   Bit be = pos.empty();
 
    // white
 
-   {
-      Bit ee = e & ~(((bm << J1) & (e >> J1)) | ((bm << I1) & (e >> I1))
-                   | ((bm >> I1) & (e << I1)) | ((bm >> J1) & (e << J1)));
+   if (pos.wk() != 0) {
 
-      for (Bit b = pos.wk(); b != 0; b = bit::rest(b)) {
+      Bit attacked = attacks(pos, Black);
 
-         Square from = bit::first(b);
+      for (Square from : pos.wk()) {
 
-         Bit atk  = bit::king_attack(from, pos.empty()) & e;
-         Bit safe = atk & ee;
-         Bit deny = atk & ~safe;
+         Bit atk  = bit::king_moves(from, be) & be;
+         Bit safe = atk & ~attacked;
+         Bit deny = atk &  attacked;
 
          ns += bit::count(safe);
          nd += bit::count(deny);
@@ -254,17 +248,15 @@ static void king_mob(Score_2 & s2, int var, const Pos & pos) {
 
    // black
 
-   {
-      Bit ee = e & ~(((wm << J1) & (e >> J1)) | ((wm << I1) & (e >> I1))
-                   | ((wm >> I1) & (e << I1)) | ((wm >> J1) & (e << J1)));
+   if (pos.bk() != 0) {
 
-      for (Bit b = pos.bk(); b != 0; b = bit::rest(b)) {
+      Bit attacked = attacks(pos, White);
 
-         Square from = bit::first(b);
+      for (Square from : pos.bk()) {
 
-         Bit atk  = bit::king_attack(from, pos.empty()) & e;
-         Bit safe = atk & ee;
-         Bit deny = atk & ~safe;
+         Bit atk  = bit::king_moves(from, be) & be;
+         Bit safe = atk & ~attacked;
+         Bit deny = atk &  attacked;
 
          ns -= bit::count(safe);
          nd -= bit::count(deny);
@@ -280,13 +272,10 @@ static void pattern(Score_2 & s2, int var, const Pos & pos) {
    int i0, i1, i2, i3; // top
    int i4, i5, i6, i7; // bottom
 
-   Bit wm = pos.wm();
-   Bit bm = pos.bm();
-
-   indices_column(wm >> 0, bm >> 0, i0, i4);
-   indices_column(wm >> 1, bm >> 1, i1, i5);
-   indices_column(wm >> 2, bm >> 2, i2, i6);
-   indices_column(wm >> 3, bm >> 3, i3, i7);
+   indices_column(pos.wm() >> 0, pos.bm() >> 0, i0, i4);
+   indices_column(pos.wm() >> 1, pos.bm() >> 1, i1, i5);
+   indices_column(pos.wm() >> 2, pos.bm() >> 2, i2, i6);
+   indices_column(pos.wm() >> 3, pos.bm() >> 3, i3, i7);
 
    s2.add(var +  265720 + i0, +1);
    s2.add(var +  797161 + i1, +1);
@@ -301,23 +290,45 @@ static void pattern(Score_2 & s2, int var, const Pos & pos) {
 
 static void indices_column(uint64 white, uint64 black, int & index_top, int & index_bottom) {
 
-   int wt, wb;
-   int bt, bb;
+   int w0, w2;
+   int b0, b2;
 
-   indices_column(white, wt, wb);
-   indices_column(black, bt, bb);
+   indices_column(white, w0, w2);
+   indices_column(black, b0, b2);
 
-   index_top    = Index_3    [bt] - Index_3    [wt];
-   index_bottom = Index_3_Rev[bb] - Index_3_Rev[wb];
+   index_top    = Trits_0[b0] - Trits_0[w0];
+   index_bottom = Trits_1[b2] - Trits_1[w2];
 }
 
 static void indices_column(uint64 b, int & i0, int & i2) {
 
-   uint64 left = b & U64(0x0C3061830C1860C3); // 4 left files
+   uint64 left = b & 0x0C3061830C1860C3; // left 4 files
    uint64 shuffle = (left >> 0) | (left >> 11) | (left >> 22);
 
-   uint64 mask = (1 << 12) - 1;
+   uint64 mask = (1 << Pattern_Size) - 1;
    i0 = (shuffle >>  0) & mask;
    i2 = (shuffle >> 26) & mask;
+}
+
+static Bit attacks(const Pos & pos, Side sd) {
+
+   Bit ba = pos.man(sd);
+   Bit be = pos.empty();
+
+   uint64 t = 0;
+
+   t |= (ba >> J1) & (be << J1);
+   t |= (ba >> I1) & (be << I1);
+   t |= (ba << I1) & (be >> I1);
+   t |= (ba << J1) & (be >> J1);
+
+   if (var::Variant == var::Frisian) {
+      t |= (ba >> L1) & (be << L1);
+      t |= (ba >> K1) & (be << K1);
+      t |= (ba << K1) & (be >> K1);
+      t |= (ba << L1) & (be >> L1);
+   }
+
+   return bit::Squares & t;
 }
 
