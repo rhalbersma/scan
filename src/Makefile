@@ -16,7 +16,7 @@ clean:
 
 # general
 
-CXX      = g++ # or clang++
+CXX      = c++
 CXXFLAGS = -pthread
 LDFLAGS  = -pthread
 
