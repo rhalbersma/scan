@@ -16,6 +16,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <netinet/in.h>
 
 using SOCKET = int;
 const SOCKET INVALID_SOCKET {-1};
